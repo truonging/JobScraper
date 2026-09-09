@@ -13,3 +13,7 @@ Later phases are provisional and require their own scope and acceptance criteria
 
 Phase 0 is limited to the scaffold and an import smoke test. All job processing,
 storage, analysis, and document generation belong to later phases.
+
+Phase 1 is complete. It provides source-independent acquisition contracts, a
+synchronous Lever adapter, current-record SQLite persistence, and a manual
+fetch-and-persist CLI workflow.

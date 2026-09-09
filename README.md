@@ -115,10 +115,9 @@ candidate facts.
 
 ## Current status
 
-The project is currently in **Phase 1: Acquisition and persistence**. The
-source-independent acquisition contracts and a SQLite persistence adapter are
-implemented. A synchronous adapter acquires published jobs from Lever's public
-Postings API. No acquisition workflow is implemented yet.
+**Phase 1: Acquisition and persistence** is complete. The project includes
+source-independent acquisition contracts, a synchronous adapter for Lever's
+public Postings API, SQLite persistence, and a manual acquisition command.
 
 Filtering, LLM integration, resume generation, and application workflows remain
 outside the current implementation.
@@ -151,12 +150,37 @@ Run from the project root:
 ```
 
 The tests cover package imports, acquisition contracts, the Lever adapter, and
-SQLite persistence.
+SQLite persistence and orchestration.
+
+## Manual acquisition
+
+Acquire all published jobs from one Lever site into SQLite:
+
+```powershell
+.\.venv\Scripts\job-matcher.exe acquire-lever `
+  --site example `
+  --company "Example Company" `
+  --database jobs.sqlite3
+```
+
+The command explicitly creates or validates the SQLite schema before fetching.
+The database path's parent directory must already exist. Repeated acquisitions
+update the current raw and normalized records for each Lever posting ID rather
+than creating historical copies.
+
+The global Lever API is used by default. Use `--api-base-url
+https://api.eu.lever.co/v0/postings` for an EU-hosted Lever site. Optional
+`--timeout-seconds` and `--page-size` arguments control each synchronous fetch.
+
+The command reports source and persistence failures without a traceback and
+returns exit code 1. It does not schedule acquisitions, retry failures, remove
+jobs missing from later fetches, track lifecycle, deduplicate across sources, or
+perform filtering or AI analysis.
 
 ## Project layout
 
 - `src/job_matcher/`: application package, including acquisition contracts, the
-  Lever source adapter, and the SQLite persistence adapter.
+  Lever source adapter, SQLite persistence adapter, orchestration, and CLI.
 - `tests/`: automated tests.
 - `pyproject.toml`: packaging, development dependencies, pytest, and Ruff settings.
 - [AGENTS.md](AGENTS.md): contributor instructions.
