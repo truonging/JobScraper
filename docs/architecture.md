@@ -2,14 +2,14 @@
 
 ## Status and scope
 
-The project is currently in Phase 1. It includes source-independent acquisition
-contracts, a synchronous Lever source adapter, and a SQLite persistence adapter
-under `src/job_matcher/`, with tests under `tests/`. No acquisition workflow is
-implemented yet.
+Phase 1 is complete. The project includes source-independent acquisition
+contracts, a synchronous Lever source adapter, a SQLite persistence adapter,
+and a manual acquisition command under `src/job_matcher/`, with tests under
+`tests/`.
 
 This document records the system's current high-level responsibilities and
-boundaries. It does not select external providers, user interfaces, AI models,
-scoring rules, or document formats.
+boundaries. The Phase 1 choices recorded here do not decide additional external
+providers, later user interfaces, AI models, scoring rules, or document formats.
 
 ## System responsibilities
 
@@ -75,7 +75,11 @@ persistence, deterministic processing, AI services, and user-facing interfaces.
 It owns sequencing and recovery decisions; interfaces such as a CLI, API, or UI
 do not contain source or persistence implementations.
 
-The concrete workflow, scheduling model, and retry mechanism are deferred.
+The Phase 1 application service fetches a complete source result and passes it
+to persistence as one atomic batch. The manual CLI is the composition root: it
+constructs the Lever and SQLite adapters, explicitly initializes or validates
+the database schema, and invokes the application service. Scheduling, retries,
+and later processing stages remain deferred.
 
 ### Job identity and state
 
@@ -149,7 +153,7 @@ The following remain open until the phase that needs them:
 - persistence technology beyond Phase 1 and future schema evolution;
 - job identity, lifecycle, deduplication, and filtering rules;
 - AI providers, models, prompts, evaluation structure, and ranking policy;
-- orchestration, scheduling, retries, and deployment;
+- scheduling, retries, and deployment;
 - user interface and human-review workflow;
 - resume templates, rendering technology, and output formats;
 - application-tracking states and application-submission behavior; and
