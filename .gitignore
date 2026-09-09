@@ -1,0 +1,43 @@
+# Python environments and generated artifacts
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# PyCharm and operating-system metadata
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# SQLite databases, journals, and sidecars
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Private candidate information and generated resumes (all formats)
+/data/
+/private/
+/candidate_profiles/
+/candidate-profiles/
+/resumes/
+/generated_resumes/
+/output/
+/outputs/
