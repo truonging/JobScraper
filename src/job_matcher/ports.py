@@ -10,6 +10,10 @@ class SourceAcquisitionError(RuntimeError):
     """Raised when a source cannot produce a valid acquisition result."""
 
 
+class PersistenceError(RuntimeError):
+    """Raised when persistence cannot store or reconstruct job data."""
+
+
 class JobSource(Protocol):
     """Fetch and normalize jobs from one configured external source."""
 
