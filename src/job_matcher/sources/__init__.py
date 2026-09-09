@@ -1,0 +1,1 @@
+"""External job-source adapters."""

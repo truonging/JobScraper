@@ -3,8 +3,8 @@
 ## Status and scope
 
 The project is currently in Phase 1. It includes source-independent acquisition
-contracts and a SQLite persistence adapter under `src/job_matcher/`, with tests
-under `tests/`. No external job-source adapter or acquisition workflow is
+contracts, a synchronous Lever source adapter, and a SQLite persistence adapter
+under `src/job_matcher/`, with tests under `tests/`. No acquisition workflow is
 implemented yet.
 
 This document records the system's current high-level responsibilities and
@@ -45,6 +45,10 @@ Source adapters own communication with external job sources and translation
 from source-specific responses into a source-independent representation. They
 do not evaluate candidate fit, decide workflow state, access candidate data,
 or generate resumes.
+
+Phase 1 uses Lever's public Postings API as its first structured source. The
+adapter acquires and normalizes published postings without accessing
+persistence.
 
 The normalized representation must retain enough provenance to identify its
 source and relate it to the source data. The exact representation and retention
@@ -140,7 +144,7 @@ which it was produced. Exact identifiers, versions, and schemas are deferred.
 
 The following remain open until the phase that needs them:
 
-- external job sources and acquisition methods;
+- additional external job sources and acquisition methods;
 - canonical job and candidate-profile schemas;
 - persistence technology beyond Phase 1 and future schema evolution;
 - job identity, lifecycle, deduplication, and filtering rules;
