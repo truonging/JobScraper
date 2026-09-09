@@ -115,12 +115,13 @@ candidate facts.
 
 ## Current status
 
-The project is currently in **Phase 0: Bootstrap**. This phase establishes the
-Python project structure, development tooling, tests, documentation, and agent
-development conventions.
+The project is currently in **Phase 1: Acquisition and persistence**. The
+source-independent acquisition contracts and a SQLite persistence adapter are
+implemented. No external job-source adapter or acquisition workflow is
+implemented yet.
 
-No job acquisition, persistence, filtering, LLM integration, resume generation,
-or application workflow has been implemented yet.
+Filtering, LLM integration, resume generation, and application workflows remain
+outside the current implementation.
 
 ## Development setup
 
@@ -149,11 +150,12 @@ Run from the project root:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-The Phase 0 smoke test verifies that the installed package imports.
+The tests cover package imports, acquisition contracts, and SQLite persistence.
 
 ## Project layout
 
-- `src/job_matcher/`: application package, currently a package marker only.
+- `src/job_matcher/`: application package, including acquisition contracts and
+  the SQLite persistence adapter.
 - `tests/`: automated tests.
 - `pyproject.toml`: packaging, development dependencies, pytest, and Ruff settings.
 - [AGENTS.md](AGENTS.md): contributor instructions.

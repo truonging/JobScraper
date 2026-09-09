@@ -83,7 +83,7 @@ class NormalizedJob:
 
 @dataclass(frozen=True, slots=True)
 class RawSourceRecord:
-    """Immutable JSON snapshot associated with one source posting."""
+    """Job-level JSON payload captured during one source retrieval."""
 
     key: SourceJobKey
     retrieved_at: datetime

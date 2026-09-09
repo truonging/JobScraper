@@ -2,13 +2,14 @@
 
 ## Status and scope
 
-The project is currently a Python 3.12 package scaffold under
-`src/job_matcher/`, with tests under `tests/`. No application components are
+The project is currently in Phase 1. It includes source-independent acquisition
+contracts and a SQLite persistence adapter under `src/job_matcher/`, with tests
+under `tests/`. No external job-source adapter or acquisition workflow is
 implemented yet.
 
 This document records the system's current high-level responsibilities and
-boundaries. It does not select providers, storage technology, schemas, user
-interfaces, models, scoring rules, or document formats.
+boundaries. It does not select external providers, user interfaces, AI models,
+scoring rules, or document formats.
 
 ## System responsibilities
 
@@ -57,6 +58,11 @@ fit-evaluation, ranking, or resume-generation policy.
 Stored source facts, normalized values, candidate facts, AI interpretations,
 and generated artifacts have distinct ownership even if a future storage
 technology keeps some of them together physically.
+
+Phase 1 uses SQLite behind the persistence interface. It stores separate current
+raw and normalized records linked by source-local identity. Reacquisition updates
+those current records atomically; historical versions and lifecycle tracking are
+deferred.
 
 ### Application orchestration
 
@@ -136,7 +142,7 @@ The following remain open until the phase that needs them:
 
 - external job sources and acquisition methods;
 - canonical job and candidate-profile schemas;
-- persistence technology and database schema;
+- persistence technology beyond Phase 1 and future schema evolution;
 - job identity, lifecycle, deduplication, and filtering rules;
 - AI providers, models, prompts, evaluation structure, and ranking policy;
 - orchestration, scheduling, retries, and deployment;
