@@ -117,8 +117,8 @@ candidate facts.
 
 The project is currently in **Phase 1: Acquisition and persistence**. The
 source-independent acquisition contracts and a SQLite persistence adapter are
-implemented. No external job-source adapter or acquisition workflow is
-implemented yet.
+implemented. A synchronous adapter acquires published jobs from Lever's public
+Postings API. No acquisition workflow is implemented yet.
 
 Filtering, LLM integration, resume generation, and application workflows remain
 outside the current implementation.
@@ -150,12 +150,13 @@ Run from the project root:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-The tests cover package imports, acquisition contracts, and SQLite persistence.
+The tests cover package imports, acquisition contracts, the Lever adapter, and
+SQLite persistence.
 
 ## Project layout
 
-- `src/job_matcher/`: application package, including acquisition contracts and
-  the SQLite persistence adapter.
+- `src/job_matcher/`: application package, including acquisition contracts, the
+  Lever source adapter, and the SQLite persistence adapter.
 - `tests/`: automated tests.
 - `pyproject.toml`: packaging, development dependencies, pytest, and Ruff settings.
 - [AGENTS.md](AGENTS.md): contributor instructions.
