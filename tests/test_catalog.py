@@ -7,12 +7,17 @@ from uuid import UUID, uuid4
 import pytest
 
 from job_matcher.catalog import (
+    IdentityDisposition,
+    IdentityEvidence,
+    IdentityEvidenceKind,
+    IdentityResolution,
+    LinkedSourceJob,
     LogicalJobId,
     SourceJobLifecycle,
     SourceJobLink,
     SourceJobStatus,
 )
-from job_matcher.models import ContractValidationError, SourceJobKey
+from job_matcher.models import ContractValidationError, NormalizedJob, SourceJobKey
 
 FIRST_SEEN = datetime(2026, 9, 1, tzinfo=UTC)
 LAST_SEEN = datetime(2026, 9, 8, tzinfo=UTC)
@@ -114,4 +119,60 @@ def test_source_job_link_rejects_non_utc_time() -> None:
             KEY,
             LogicalJobId(uuid4()),
             datetime(2026, 9, 8, tzinfo=timezone(timedelta(hours=-7))),
+        )
+
+
+def normalized_job(key: SourceJobKey = KEY) -> NormalizedJob:
+    return NormalizedJob(
+        key=key,
+        company="Example Company",
+        title="Software Engineer",
+        description="Build software.",
+        job_url="https://jobs.example/job-123",
+        retrieved_at=LAST_SEEN,
+    )
+
+
+def source_link(key: SourceJobKey = KEY) -> SourceJobLink:
+    return SourceJobLink(key, LogicalJobId(uuid4()), LAST_SEEN)
+
+
+def test_linked_source_job_requires_matching_source_key() -> None:
+    with pytest.raises(ContractValidationError, match="same source job key"):
+        LinkedSourceJob(
+            normalized_job(),
+            source_link(SourceJobKey("lever", "example", "other")),
+        )
+
+
+def test_identity_evidence_rejects_self_match() -> None:
+    with pytest.raises(ContractValidationError, match="itself"):
+        IdentityEvidence(
+            source_key=KEY,
+            matched_source_key=KEY,
+            matched_logical_job_id=LogicalJobId(uuid4()),
+            kind=IdentityEvidenceKind.EXACT_CANONICAL_JOB_URL,
+            disposition=IdentityDisposition.AUTOMATIC_LINK,
+            value="https://jobs.example/job-123",
+        )
+
+
+def test_content_fingerprint_cannot_authorize_automatic_link() -> None:
+    with pytest.raises(ContractValidationError, match="cannot authorize"):
+        IdentityEvidence(
+            source_key=KEY,
+            matched_source_key=SourceJobKey("ashby", "example", "other"),
+            matched_logical_job_id=LogicalJobId(uuid4()),
+            kind=IdentityEvidenceKind.EXACT_CONTENT_FINGERPRINT,
+            disposition=IdentityDisposition.AUTOMATIC_LINK,
+            value="a" * 64,
+        )
+
+
+def test_identity_resolution_requires_immutable_evidence() -> None:
+    with pytest.raises(ContractValidationError, match="immutable tuple"):
+        IdentityResolution(
+            link=source_link(),
+            created_logical_job=True,
+            evidence=[],  # type: ignore[arg-type]
         )

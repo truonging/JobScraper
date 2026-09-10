@@ -121,7 +121,9 @@ contracts, a synchronous adapter for Lever's public Postings API, SQLite
 persistence, a manual acquisition command, and foundational contracts for
 source-posting lifecycle, logical identity, and deterministic filter policies.
 SQLite schema version 2 reconciles successful source snapshots into current job
-and lifecycle state.
+and lifecycle state. A source-independent identity resolver can assign unlinked
+source postings to stable logical-job UUIDs using conservative deterministic
+evidence.
 
 Filtering, LLM integration, resume generation, and application workflows remain
 outside the current implementation.
@@ -191,6 +193,25 @@ https://api.eu.lever.co/v0/postings` for an EU-hosted Lever site. Optional
 The command reports source and persistence failures without a traceback and
 returns exit code 1. It does not schedule acquisitions, retry failures,
 deduplicate across sources, or perform filtering or AI analysis.
+
+## Logical identity
+
+Logical identity resolution operates only on persisted normalized jobs. It may
+automatically link postings when the same URL field has an exact conservative
+canonical match, normalized company names match, and every qualifying URL match
+identifies the same logical-job UUID. Job URLs and application URLs are compared
+only with their corresponding fields. Title and location differences do not
+prevent an otherwise strong URL match.
+
+If URL matches conflict or identify multiple logical jobs, the resolver creates
+a separate logical job. An exact normalized company, title, location, and
+description fingerprint is reported only as transient duplicate-candidate
+evidence and never causes an automatic merge. Existing source links are durable
+and normal source-field changes do not move them.
+
+The initial resolver performs straightforward in-memory comparisons. It has no
+provider-specific behavior, fuzzy matching, evidence storage, or performance
+indexing. CLI integration is deferred to a later Phase 2 issue.
 
 ## Filter policy
 

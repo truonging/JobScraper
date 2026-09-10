@@ -7,8 +7,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
-from job_matcher.catalog import SourceJobLifecycle, SourceJobStatus
+from job_matcher.catalog import (
+    LinkedSourceJob,
+    LogicalJobId,
+    SourceJobLifecycle,
+    SourceJobLink,
+    SourceJobStatus,
+)
 from job_matcher.models import (
     AcquiredJob,
     NormalizedJob,
@@ -244,6 +251,53 @@ FROM source_job_lifecycle
 WHERE source = ? AND source_scope = ? AND source_job_id = ?
 """
 
+_SELECT_LINK = """
+SELECT source, source_scope, source_job_id, logical_job_id, linked_at
+FROM source_job_links
+WHERE source = ? AND source_scope = ? AND source_job_id = ?
+"""
+
+_SELECT_UNLINKED_JOBS = """
+SELECT
+    normalized.source,
+    normalized.source_scope,
+    normalized.source_job_id,
+    normalized.company,
+    normalized.title,
+    normalized.description,
+    normalized.location,
+    normalized.job_url,
+    normalized.apply_url,
+    normalized.posted_at,
+    normalized.retrieved_at
+FROM normalized_jobs AS normalized
+LEFT JOIN source_job_links AS link
+    USING (source, source_scope, source_job_id)
+WHERE link.logical_job_id IS NULL
+ORDER BY normalized.source, normalized.source_scope, normalized.source_job_id
+"""
+
+_SELECT_LINKED_JOBS = """
+SELECT
+    normalized.source,
+    normalized.source_scope,
+    normalized.source_job_id,
+    normalized.company,
+    normalized.title,
+    normalized.description,
+    normalized.location,
+    normalized.job_url,
+    normalized.apply_url,
+    normalized.posted_at,
+    normalized.retrieved_at,
+    link.logical_job_id,
+    link.linked_at
+FROM normalized_jobs AS normalized
+JOIN source_job_links AS link
+    USING (source, source_scope, source_job_id)
+ORDER BY normalized.source, normalized.source_scope, normalized.source_job_id
+"""
+
 _V1_TABLES = {"raw_source_jobs", "normalized_jobs"}
 _V2_COLUMNS = {
     "raw_source_jobs": _RAW_COLUMNS,
@@ -375,6 +429,149 @@ class SQLiteJobRepository:
             return self._lifecycle_from_row(row)
         except (TypeError, ValueError) as error:
             raise PersistenceError("stored source job lifecycle is invalid") from error
+
+    def list_unlinked_jobs(self) -> tuple[NormalizedJob, ...]:
+        """Return current normalized jobs without logical assignments."""
+        with self._existing_connection() as connection:
+            try:
+                rows = connection.execute(_SELECT_UNLINKED_JOBS).fetchall()
+            except sqlite3.Error as error:
+                raise PersistenceError("could not list unlinked source jobs") from error
+        try:
+            return tuple(self._normalized_from_identity_row(row) for row in rows)
+        except (TypeError, ValueError) as error:
+            raise PersistenceError("stored unlinked source job is invalid") from error
+
+    def list_linked_jobs(self) -> tuple[LinkedSourceJob, ...]:
+        """Return current normalized jobs with their logical assignments."""
+        with self._existing_connection() as connection:
+            try:
+                rows = connection.execute(_SELECT_LINKED_JOBS).fetchall()
+            except sqlite3.Error as error:
+                raise PersistenceError("could not list linked source jobs") from error
+        try:
+            return tuple(
+                LinkedSourceJob(
+                    normalized=self._normalized_from_identity_row(row),
+                    link=self._link_from_row(row),
+                )
+                for row in rows
+            )
+        except (TypeError, ValueError) as error:
+            raise PersistenceError("stored linked source job is invalid") from error
+
+    def assign_logical_job(
+        self,
+        source_key: SourceJobKey,
+        proposed_logical_job_id: LogicalJobId,
+        linked_at: datetime,
+    ) -> SourceJobLink:
+        """Create an atomic logical assignment or return the existing link."""
+        proposed_link = SourceJobLink(
+            source_key=source_key,
+            logical_job_id=proposed_logical_job_id,
+            linked_at=linked_at,
+        )
+        with self._existing_connection() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    _SELECT_LINK, self._key_values(source_key)
+                ).fetchone()
+                if row is not None:
+                    existing = self._link_from_row(row)
+                    connection.commit()
+                    return existing
+
+                source_exists = connection.execute(
+                    """
+                    SELECT 1
+                    FROM normalized_jobs
+                    WHERE source = ? AND source_scope = ? AND source_job_id = ?
+                    """,
+                    self._key_values(source_key),
+                ).fetchone()
+                if source_exists is None:
+                    raise PersistenceError(
+                        "cannot link a source posting that is not persisted"
+                    )
+
+                connection.execute(
+                    "INSERT OR IGNORE INTO logical_jobs (logical_job_id) VALUES (?)",
+                    (str(proposed_logical_job_id.value),),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO source_job_links (
+                        source,
+                        source_scope,
+                        source_job_id,
+                        logical_job_id,
+                        linked_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        source_key.source,
+                        source_key.source_scope,
+                        source_key.source_job_id,
+                        str(proposed_logical_job_id.value),
+                        linked_at.isoformat(),
+                    ),
+                )
+                connection.commit()
+                return proposed_link
+            except PersistenceError:
+                connection.rollback()
+                raise
+            except (TypeError, ValueError) as error:
+                connection.rollback()
+                raise PersistenceError("stored source job link is invalid") from error
+            except sqlite3.Error as error:
+                connection.rollback()
+                raise PersistenceError("could not assign logical job") from error
+
+    def get_link(self, source_key: SourceJobKey) -> SourceJobLink | None:
+        """Return a source posting's durable logical assignment, if present."""
+        with self._existing_connection() as connection:
+            try:
+                row = connection.execute(
+                    _SELECT_LINK, self._key_values(source_key)
+                ).fetchone()
+            except sqlite3.Error as error:
+                raise PersistenceError("could not retrieve source job link") from error
+        if row is None:
+            return None
+        try:
+            return self._link_from_row(row)
+        except (TypeError, ValueError) as error:
+            raise PersistenceError("stored source job link is invalid") from error
+
+    def get_logical_job_activity(self, logical_job_id: LogicalJobId) -> bool | None:
+        """Derive logical activity from linked source-posting lifecycle state."""
+        with self._existing_connection() as connection:
+            try:
+                exists = connection.execute(
+                    "SELECT 1 FROM logical_jobs WHERE logical_job_id = ?",
+                    (str(logical_job_id.value),),
+                ).fetchone()
+                if exists is None:
+                    return None
+                active = connection.execute(
+                    """
+                    SELECT 1
+                    FROM source_job_links AS link
+                    JOIN source_job_lifecycle AS lifecycle
+                        USING (source, source_scope, source_job_id)
+                    WHERE link.logical_job_id = ? AND lifecycle.status = 'active'
+                    LIMIT 1
+                    """,
+                    (str(logical_job_id.value),),
+                ).fetchone()
+            except sqlite3.Error as error:
+                raise PersistenceError(
+                    "could not derive logical job activity"
+                ) from error
+        return active is not None
 
     @classmethod
     def _create_v2_schema(cls, connection: sqlite3.Connection) -> None:
@@ -614,4 +811,38 @@ class SQLiteJobRepository:
                 if row["inactive_at"] is not None
                 else None
             ),
+        )
+
+    @staticmethod
+    def _normalized_from_identity_row(row: sqlite3.Row) -> NormalizedJob:
+        return NormalizedJob(
+            key=SourceJobKey(
+                source=row["source"],
+                source_scope=row["source_scope"],
+                source_job_id=row["source_job_id"],
+            ),
+            company=row["company"],
+            title=row["title"],
+            description=row["description"],
+            location=row["location"],
+            job_url=row["job_url"],
+            apply_url=row["apply_url"],
+            posted_at=(
+                datetime.fromisoformat(row["posted_at"])
+                if row["posted_at"] is not None
+                else None
+            ),
+            retrieved_at=datetime.fromisoformat(row["retrieved_at"]),
+        )
+
+    @staticmethod
+    def _link_from_row(row: sqlite3.Row) -> SourceJobLink:
+        return SourceJobLink(
+            source_key=SourceJobKey(
+                source=row["source"],
+                source_scope=row["source_scope"],
+                source_job_id=row["source_job_id"],
+            ),
+            logical_job_id=LogicalJobId(UUID(row["logical_job_id"])),
+            linked_at=datetime.fromisoformat(row["linked_at"]),
         )

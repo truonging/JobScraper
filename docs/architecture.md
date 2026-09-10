@@ -76,8 +76,9 @@ Schema initialization is explicit. A valid version 1 database migrates
 transactionally to version 2 while preserving current source records. Since
 version 1 did not retain observation history, migration uses each posting's
 current retrieval time as both its first- and last-seen time. Version 2 also
-contains logical-job and source-link tables, but assignment and deduplication
-remain owned by a later Phase 2 stage.
+contains logical-job and source-link tables. Persistence can create durable
+assignments and derive logical-job activity from linked source-posting lifecycle
+state, but it does not decide whether two postings represent the same job.
 
 ### Application orchestration
 
@@ -114,14 +115,21 @@ Phase 2 persistence invariant rather than a permanent replay policy.
 Logical jobs use opaque stable UUIDs. A durable source-posting link assigns each
 source posting to one logical job; ordinary source-field changes do not move an
 existing link. Logical-job activity is derived: a logical job is active when at
-least one linked source posting is active. Persistence and transition behavior
-for these contracts remain deferred to later Phase 2 issues.
+least one linked source posting is active.
 
-Deduplication will use conservative deterministic identity rules. Exact
-canonical URLs may provide strong evidence when they identify the same
-opportunity. Equal normalized content may identify a duplicate candidate but
-cannot automatically merge logical jobs. Evidence contracts, URL
-canonicalization, matching, and assignment behavior remain deferred.
+The identity resolver operates only on normalized source-independent records and
+may consider active and inactive linked postings. It automatically links an
+unlinked posting only when an exact same-field canonical job or application URL,
+an equal normalized company, and all qualifying matches identify one logical
+UUID. Job and application URLs are separate evidence categories. Conflicting or
+ambiguous URL evidence creates a separate logical job.
+
+An exact normalized company, title, location, and description fingerprint can
+identify a duplicate candidate but cannot automatically merge logical jobs.
+Candidate and ambiguous-match evidence is returned from resolution but is not
+persisted. The initial resolver uses direct comparisons without provider-specific
+rules, fuzzy matching, AI, caches, or specialized indexes. Manual identity
+correction and persisted candidate-review workflows remain deferred.
 
 ### Candidate profile
 
@@ -189,7 +197,7 @@ The following remain open until the phase that needs them:
 - additional external job sources and acquisition methods;
 - canonical job and candidate-profile schemas;
 - persistence technology beyond Phase 1 and future schema evolution;
-- deterministic identity evidence, matching, and logical-job assignment;
+- manual logical-job merge, split, unlink, and candidate-review workflows;
 - deterministic filter evaluation and processing order;
 - AI providers, models, prompts, evaluation structure, and ranking policy;
 - scheduling, retries, and deployment;

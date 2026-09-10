@@ -5,11 +5,13 @@ import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 
 from job_matcher import sqlite_repository
-from job_matcher.catalog import SourceJobStatus
+from job_matcher.catalog import LogicalJobId, SourceJobStatus
+from job_matcher.identity import IdentityResolver
 from job_matcher.models import (
     AcquiredJob,
     NormalizedJob,
@@ -23,6 +25,8 @@ from job_matcher.sqlite_repository import SQLiteJobRepository
 T1 = datetime(2026, 9, 8, 12, 30, tzinfo=UTC)
 T2 = datetime(2026, 9, 8, 13, 30, tzinfo=UTC)
 T3 = datetime(2026, 9, 8, 14, 30, tzinfo=UTC)
+LOGICAL_ID_1 = LogicalJobId(UUID("00000000-0000-4000-8000-000000000001"))
+LOGICAL_ID_2 = LogicalJobId(UUID("00000000-0000-4000-8000-000000000002"))
 
 
 def make_job(
@@ -34,6 +38,7 @@ def make_job(
     retrieved_at: datetime = T1,
     payload_json: str | None = None,
     include_optional: bool = True,
+    job_url: str | None = None,
 ) -> AcquiredJob:
     key = SourceJobKey(source, source_scope, source_job_id)
     normalized = NormalizedJob(
@@ -42,7 +47,7 @@ def make_job(
         title=title,
         description="Build reliable software.",
         location="Remote" if include_optional else None,
-        job_url=f"https://jobs.example.com/{source_job_id}",
+        job_url=job_url or f"https://jobs.example.com/{source_job_id}",
         apply_url=(
             f"https://jobs.example.com/{source_job_id}/apply"
             if include_optional
@@ -548,3 +553,122 @@ def test_invalid_stored_lifecycle_is_reported_as_persistence_error(
         PersistenceError, match="stored source job lifecycle is invalid"
     ):
         repository.get_lifecycle(job.normalized.key)
+
+
+def test_identity_queries_and_assignment_round_trip(tmp_path: Path) -> None:
+    repository = initialized_repository(tmp_path / "jobs.sqlite3")
+    job = make_job()
+    repository.reconcile_snapshot(make_snapshot(job))
+
+    assert repository.list_unlinked_jobs() == (job.normalized,)
+    assert repository.list_linked_jobs() == ()
+
+    link = repository.assign_logical_job(job.normalized.key, LOGICAL_ID_1, T1)
+
+    assert repository.get_link(job.normalized.key) == link
+    assert repository.list_unlinked_jobs() == ()
+    linked = repository.list_linked_jobs()
+    assert len(linked) == 1
+    assert linked[0].normalized == job.normalized
+    assert linked[0].link == link
+
+
+def test_existing_link_is_never_moved_to_proposed_logical_job(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    repository = initialized_repository(database_path)
+    job = make_job()
+    repository.reconcile_snapshot(make_snapshot(job))
+    original = repository.assign_logical_job(job.normalized.key, LOGICAL_ID_1, T1)
+
+    returned = repository.assign_logical_job(job.normalized.key, LOGICAL_ID_2, T2)
+
+    assert returned == original
+    assert repository.get_link(job.normalized.key) == original
+    assert row_count(database_path, "logical_jobs") == 1
+    assert row_count(database_path, "source_job_links") == 1
+
+
+def test_reacquired_source_field_changes_preserve_existing_link(tmp_path: Path) -> None:
+    repository = initialized_repository(tmp_path / "jobs.sqlite3")
+    job = make_job()
+    repository.reconcile_snapshot(make_snapshot(job))
+    original = repository.assign_logical_job(job.normalized.key, LOGICAL_ID_1, T1)
+    changed = make_job(
+        title="Renamed Role",
+        retrieved_at=T2,
+        payload_json='{"id":"job-123","text":"Renamed Role"}',
+    )
+
+    repository.reconcile_snapshot(make_snapshot(changed, retrieved_at=T2))
+
+    assert repository.get_link(job.normalized.key) == original
+
+
+def test_missing_source_job_cannot_leave_orphan_logical_job(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    repository = initialized_repository(database_path)
+    missing = SourceJobKey("lever", "example", "missing")
+
+    with pytest.raises(PersistenceError, match="not persisted"):
+        repository.assign_logical_job(missing, LOGICAL_ID_1, T1)
+
+    assert row_count(database_path, "logical_jobs") == 0
+    assert row_count(database_path, "source_job_links") == 0
+
+
+def test_logical_activity_is_derived_from_all_linked_source_lifecycles(
+    tmp_path: Path,
+) -> None:
+    repository = initialized_repository(tmp_path / "jobs.sqlite3")
+    first = make_job(source_job_id="job-1", retrieved_at=T1)
+    second = make_job(source_job_id="job-2", retrieved_at=T1)
+    repository.reconcile_snapshot(make_snapshot(first, second, retrieved_at=T1))
+    repository.assign_logical_job(first.normalized.key, LOGICAL_ID_1, T1)
+    repository.assign_logical_job(second.normalized.key, LOGICAL_ID_1, T1)
+
+    assert repository.get_logical_job_activity(LOGICAL_ID_1) is True
+    assert repository.get_logical_job_activity(LOGICAL_ID_2) is None
+
+    observed_second = make_job(source_job_id="job-2", retrieved_at=T2)
+    repository.reconcile_snapshot(make_snapshot(observed_second, retrieved_at=T2))
+
+    assert (
+        repository.get_lifecycle(first.normalized.key).status
+        is SourceJobStatus.INACTIVE
+    )  # type: ignore[union-attr]
+    assert repository.get_logical_job_activity(LOGICAL_ID_1) is True
+
+    repository.reconcile_snapshot(make_snapshot(retrieved_at=T3))
+
+    assert repository.get_logical_job_activity(LOGICAL_ID_1) is False
+    assert {item.normalized.key for item in repository.list_linked_jobs()} == {
+        first.normalized.key,
+        second.normalized.key,
+    }
+
+
+def test_resolver_can_link_to_inactive_posting_from_another_source(
+    tmp_path: Path,
+) -> None:
+    repository = initialized_repository(tmp_path / "jobs.sqlite3")
+    shared_url = "https://company.example/jobs/shared-role"
+    lever_job = make_job(source="lever", job_url=shared_url)
+    repository.reconcile_snapshot(make_snapshot(lever_job, source="lever"))
+    IdentityResolver(
+        repository,
+        uuid_factory=lambda: LOGICAL_ID_1.value,
+        clock=lambda: T1,
+    ).resolve_unlinked()
+    repository.reconcile_snapshot(make_snapshot(source="lever", retrieved_at=T2))
+    greenhouse_job = make_job(source="greenhouse", job_url=shared_url)
+    repository.reconcile_snapshot(make_snapshot(greenhouse_job, source="greenhouse"))
+
+    resolutions = IdentityResolver(
+        repository,
+        uuid_factory=lambda: LOGICAL_ID_2.value,
+        clock=lambda: T2,
+    ).resolve_unlinked()
+
+    assert len(resolutions) == 1
+    assert resolutions[0].created_logical_job is False
+    assert resolutions[0].link.logical_job_id == LOGICAL_ID_1
