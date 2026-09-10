@@ -2,10 +2,11 @@
 
 ## Status and scope
 
-Phase 1 is complete. The project includes source-independent acquisition
-contracts, a synchronous Lever source adapter, a SQLite persistence adapter,
-and a manual acquisition command under `src/job_matcher/`, with tests under
-`tests/`.
+Phase 1 is complete and Phase 2 is in progress. The project includes
+source-independent full-snapshot acquisition contracts, a synchronous Lever
+source adapter, a SQLite persistence adapter, a manual acquisition command,
+and foundational lifecycle, logical-identity, and filter-policy contracts under
+`src/job_matcher/`, with tests under `tests/`.
 
 This document records the system's current high-level responsibilities and
 boundaries. The Phase 1 choices recorded here do not decide additional external
@@ -50,9 +51,10 @@ Phase 1 uses Lever's public Postings API as its first structured source. The
 adapter acquires and normalizes published postings without accessing
 persistence.
 
-The normalized representation must retain enough provenance to identify its
-source and relate it to the source data. The exact representation and retention
-policy are deferred.
+The normalized representation and raw source record share a source-local key
+and retrieval time. A successful adapter acquisition returns a complete
+`SourceSnapshot` for one source scope, including when the snapshot contains no
+postings. Failed or malformed acquisitions do not produce a snapshot.
 
 ### Persistence
 
@@ -75,7 +77,7 @@ persistence, deterministic processing, AI services, and user-facing interfaces.
 It owns sequencing and recovery decisions; interfaces such as a CLI, API, or UI
 do not contain source or persistence implementations.
 
-The Phase 1 application service fetches a complete source result and passes it
+The application service fetches a complete source snapshot and passes its jobs
 to persistence as one atomic batch. The manual CLI is the composition root: it
 constructs the Lever and SQLite adapters, explicitly initializes or validates
 the database schema, and invokes the application service. Scheduling, retries,
@@ -88,8 +90,24 @@ application progress are separate concepts. Deduplication or identity resolution
 must not silently destroy source provenance. Job-source lifecycle state must not
 be conflated with application workflow state.
 
-Identity rules, lifecycle states, deduplication algorithms, and processing order
-are deferred until their requirements are defined.
+Lifecycle belongs to source postings. A source posting is active when present in
+the latest successfully completed full snapshot for its source scope and becomes
+inactive after one successful snapshot in which it is absent. Failed or
+malformed acquisitions cannot change lifecycle state, and later observation
+reactivates the posting. Lifecycle timestamps record first observation, most
+recent observation, and the successful snapshot that established inactivity.
+
+Logical jobs use opaque stable UUIDs. A durable source-posting link assigns each
+source posting to one logical job; ordinary source-field changes do not move an
+existing link. Logical-job activity is derived: a logical job is active when at
+least one linked source posting is active. Persistence and transition behavior
+for these contracts remain deferred to later Phase 2 issues.
+
+Deduplication will use conservative deterministic identity rules. Exact
+canonical URLs may provide strong evidence when they identify the same
+opportunity. Equal normalized content may identify a duplicate candidate but
+cannot automatically merge logical jobs. Evidence contracts, URL
+canonicalization, matching, and assignment behavior remain deferred.
 
 ### Candidate profile
 
@@ -106,9 +124,15 @@ verified candidate facts. AI-provider responses are untrusted outputs: the
 application validates them before storage or use. Interpretations remain
 traceable to the inputs used to produce them.
 
-Filtering, scoring, ranking, recommendation policy, model choice, prompts, and
-human-review requirements are deferred. Neither an AI provider nor a job source
-controls final workflow decisions.
+Phase 2 deterministic filtering is limited to clearly unsuitable postings and
+uses source-independent normalized fields. Its version 1 TOML policy contains
+literal title, location, and description inclusion/exclusion terms plus exact
+company exclusions. Matching uses Unicode case folding and collapsed whitespace;
+an empty inclusion list imposes no requirement. Policy files receive only a
+SHA-256 identifier of their exact contents for provenance. Filter evaluation,
+scoring, ranking, model choice, prompts, and human-review requirements remain
+deferred. Neither an AI provider nor a job source controls final workflow
+decisions.
 
 ### Resume tailoring and rendering
 
@@ -151,7 +175,9 @@ The following remain open until the phase that needs them:
 - additional external job sources and acquisition methods;
 - canonical job and candidate-profile schemas;
 - persistence technology beyond Phase 1 and future schema evolution;
-- job identity, lifecycle, deduplication, and filtering rules;
+- SQLite lifecycle and logical-identity persistence and schema migration;
+- deterministic identity evidence, matching, and logical-job assignment;
+- deterministic filter evaluation and processing order;
 - AI providers, models, prompts, evaluation structure, and ranking policy;
 - scheduling, retries, and deployment;
 - user interface and human-review workflow;

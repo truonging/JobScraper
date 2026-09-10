@@ -1,0 +1,16 @@
+version = 1
+
+[title]
+include_any = ["software engineer", "backend engineer"]
+exclude_any = ["principal", "director"]
+
+[location]
+include_any = ["remote", "california"]
+exclude_any = []
+
+[company]
+exclude = ["Example Excluded Company"]
+
+[description]
+include_any = ["python"]
+exclude_any = ["security clearance required"]

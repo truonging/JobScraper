@@ -11,6 +11,7 @@ from job_matcher.models import (
     NormalizedJob,
     RawSourceRecord,
     SourceJobKey,
+    SourceSnapshot,
 )
 
 RETRIEVED_AT = datetime(2026, 9, 8, 12, 30, tzinfo=UTC)
@@ -57,6 +58,63 @@ def test_acquired_job_accepts_complete_matching_records() -> None:
 
     assert acquired.normalized.key.source_job_id == "job-123"
     assert acquired.raw.payload_json.startswith("{")
+
+
+def test_source_snapshot_accepts_empty_successful_result() -> None:
+    snapshot = SourceSnapshot("lever", "example", RETRIEVED_AT, ())
+
+    assert snapshot.jobs == ()
+
+
+@pytest.mark.parametrize("source", ["lever", "ashby", "greenhouse"])
+def test_source_snapshot_is_source_independent(source: str) -> None:
+    key = make_key(source=source)
+    acquired = AcquiredJob(
+        normalized=make_normalized(key=key),
+        raw=make_raw(key=key),
+    )
+
+    snapshot = SourceSnapshot(source, "example", RETRIEVED_AT, (acquired,))
+
+    assert snapshot.jobs == (acquired,)
+
+
+def test_source_snapshot_rejects_mutable_jobs_collection() -> None:
+    with pytest.raises(ContractValidationError, match="immutable tuple"):
+        SourceSnapshot("lever", "example", RETRIEVED_AT, [])  # type: ignore[arg-type]
+
+
+def test_empty_source_snapshot_requires_canonical_utc() -> None:
+    non_utc = datetime(2026, 9, 8, tzinfo=timezone(timedelta(hours=-7)))
+
+    with pytest.raises(ContractValidationError, match="datetime.UTC"):
+        SourceSnapshot("lever", "example", non_utc, ())
+
+
+def test_source_snapshot_rejects_mismatched_scope() -> None:
+    acquired = AcquiredJob(normalized=make_normalized(), raw=make_raw())
+
+    with pytest.raises(ContractValidationError, match="source and source_scope"):
+        SourceSnapshot("lever", "another-site", RETRIEVED_AT, (acquired,))
+
+
+def test_source_snapshot_rejects_mismatched_retrieval_time() -> None:
+    acquired = AcquiredJob(normalized=make_normalized(), raw=make_raw())
+
+    with pytest.raises(ContractValidationError, match="snapshot retrieved_at"):
+        SourceSnapshot(
+            "lever",
+            "example",
+            datetime(2026, 9, 8, 12, 31, tzinfo=UTC),
+            (acquired,),
+        )
+
+
+def test_source_snapshot_rejects_duplicate_source_key() -> None:
+    acquired = AcquiredJob(normalized=make_normalized(), raw=make_raw())
+
+    with pytest.raises(ContractValidationError, match="only once"):
+        SourceSnapshot("lever", "example", RETRIEVED_AT, (acquired, acquired))
 
 
 def test_normalized_job_accepts_optional_values_as_none() -> None:

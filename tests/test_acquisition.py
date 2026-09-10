@@ -1,12 +1,40 @@
 """Tests for acquisition application orchestration."""
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import pytest
 
 from job_matcher.acquisition import acquire_and_persist
-from job_matcher.models import AcquiredJob
+from job_matcher.models import (
+    AcquiredJob,
+    NormalizedJob,
+    RawSourceRecord,
+    SourceJobKey,
+    SourceSnapshot,
+)
 from job_matcher.ports import PersistenceError, SourceAcquisitionError
+
+RETRIEVED_AT = datetime(2026, 9, 8, 12, 30, tzinfo=UTC)
+
+
+def acquired_job(source_job_id: str) -> AcquiredJob:
+    key = SourceJobKey("test", "example", source_job_id)
+    return AcquiredJob(
+        normalized=NormalizedJob(
+            key=key,
+            company="Example Company",
+            title="Software Engineer",
+            description="Build software.",
+            job_url=f"https://jobs.example/{source_job_id}",
+            retrieved_at=RETRIEVED_AT,
+        ),
+        raw=RawSourceRecord(
+            key=key,
+            retrieved_at=RETRIEVED_AT,
+            payload_json=f'{{"id":"{source_job_id}"}}',
+        ),
+    )
 
 
 class RecordingSource:
@@ -17,15 +45,20 @@ class RecordingSource:
         error: Exception | None = None,
         events: list[str] | None = None,
     ) -> None:
-        self.jobs = jobs
+        self.snapshot = SourceSnapshot(
+            source="test",
+            source_scope="example",
+            retrieved_at=RETRIEVED_AT,
+            jobs=tuple(jobs),
+        )
         self.error = error
         self.events = events if events is not None else []
 
-    def fetch_jobs(self) -> Sequence[AcquiredJob]:
+    def fetch_snapshot(self) -> SourceSnapshot:
         self.events.append("fetch")
         if self.error is not None:
             raise self.error
-        return self.jobs
+        return self.snapshot
 
 
 class RecordingRepository:
@@ -62,8 +95,8 @@ def test_acquire_and_persist_stores_empty_successful_batch() -> None:
 
 def test_acquire_and_persist_fetches_before_storing_complete_batch() -> None:
     events: list[str] = []
-    jobs = (object(), object())
-    source = RecordingSource(jobs, events=events)  # type: ignore[arg-type]
+    jobs = (acquired_job("job-1"), acquired_job("job-2"))
+    source = RecordingSource(jobs, events=events)
     repository = RecordingRepository(events=events)
 
     count = acquire_and_persist(source, repository)
