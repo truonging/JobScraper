@@ -125,8 +125,13 @@ and lifecycle state. A source-independent identity resolver can assign unlinked
 source postings to stable logical-job UUIDs using conservative deterministic
 evidence.
 
-Filtering, LLM integration, resume generation, and application workflows remain
-outside the current implementation.
+The deterministic filter evaluator applies the version 1 policy to supplied
+linked normalized postings and returns transient decisions with source, logical
+job, policy, and evaluation-time provenance. A logical job proceeds when at
+least one supplied active representation is eligible.
+
+Filtering orchestration, LLM integration, resume generation, and application
+workflows remain outside the current implementation.
 
 ## Development setup
 
@@ -225,9 +230,14 @@ collapsing whitespace. Title, location, and description rules use literal
 substring matching. Company exclusions use exact normalized-name matching.
 Terms are not regular expressions, and the policy does not use stemming, fuzzy
 matching, synonyms, or AI. An empty `include_any` imposes no requirement; a
-nonempty `include_any` requires at least one matching term. Any exclusion match
-rejects the posting. The evaluator that applies these rules is deferred to a
-later Phase 2 issue.
+nonempty `include_any` requires at least one matching term, independently for
+each configured field. Any exclusion match rejects the posting.
+
+The evaluator processes exactly the linked normalized postings supplied by its
+caller. Persistence or orchestration must select active postings. Decisions are
+currently transient, and a logical job remains eligible when any supplied
+representation is eligible. The evaluator does not rank jobs or inspect
+source-specific raw payloads.
 
 ## Project layout
 
