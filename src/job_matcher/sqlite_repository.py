@@ -298,6 +298,30 @@ JOIN source_job_links AS link
 ORDER BY normalized.source, normalized.source_scope, normalized.source_job_id
 """
 
+_SELECT_ACTIVE_LINKED_JOBS = """
+SELECT
+    normalized.source,
+    normalized.source_scope,
+    normalized.source_job_id,
+    normalized.company,
+    normalized.title,
+    normalized.description,
+    normalized.location,
+    normalized.job_url,
+    normalized.apply_url,
+    normalized.posted_at,
+    normalized.retrieved_at,
+    link.logical_job_id,
+    link.linked_at
+FROM normalized_jobs AS normalized
+JOIN source_job_links AS link
+    USING (source, source_scope, source_job_id)
+JOIN source_job_lifecycle AS lifecycle
+    USING (source, source_scope, source_job_id)
+WHERE lifecycle.status = 'active'
+ORDER BY normalized.source, normalized.source_scope, normalized.source_job_id
+"""
+
 _V1_TABLES = {"raw_source_jobs", "normalized_jobs"}
 _V2_COLUMNS = {
     "raw_source_jobs": _RAW_COLUMNS,
@@ -459,6 +483,28 @@ class SQLiteJobRepository:
             )
         except (TypeError, ValueError) as error:
             raise PersistenceError("stored linked source job is invalid") from error
+
+    def list_active_linked_jobs(self) -> tuple[LinkedSourceJob, ...]:
+        """Return active normalized jobs with their logical assignments."""
+        with self._existing_connection() as connection:
+            try:
+                rows = connection.execute(_SELECT_ACTIVE_LINKED_JOBS).fetchall()
+            except sqlite3.Error as error:
+                raise PersistenceError(
+                    "could not list active linked source jobs"
+                ) from error
+        try:
+            return tuple(
+                LinkedSourceJob(
+                    normalized=self._normalized_from_identity_row(row),
+                    link=self._link_from_row(row),
+                )
+                for row in rows
+            )
+        except (TypeError, ValueError) as error:
+            raise PersistenceError(
+                "stored active linked source job is invalid"
+            ) from error
 
     def assign_logical_job(
         self,

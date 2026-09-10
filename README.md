@@ -115,8 +115,9 @@ candidate facts.
 
 ## Current status
 
-**Phase 1: Acquisition and persistence** is complete, and **Phase 2** is in
-progress. The project includes source-independent full-snapshot acquisition
+**Phase 1: Acquisition and persistence** and **Phase 2: Identity, lifecycle,
+deduplication, and deterministic filtering** are complete. The project includes
+source-independent full-snapshot acquisition
 contracts, a synchronous adapter for Lever's public Postings API, SQLite
 persistence, a manual acquisition command, and foundational contracts for
 source-posting lifecycle, logical identity, and deterministic filter policies.
@@ -130,8 +131,8 @@ linked normalized postings and returns transient decisions with source, logical
 job, policy, and evaluation-time provenance. A logical job proceeds when at
 least one supplied active representation is eligible.
 
-Filtering orchestration, LLM integration, resume generation, and application
-workflows remain outside the current implementation.
+LLM integration, resume generation, and application workflows remain outside
+the current implementation.
 
 ## Development setup
 
@@ -161,7 +162,8 @@ Run from the project root:
 ```
 
 The tests cover package imports, acquisition and Phase 2 contracts, filter-policy
-loading, the Lever adapter, and SQLite persistence and orchestration.
+loading and evaluation, the Lever adapter, identity resolution, the complete
+Phase 2 pipeline, and SQLite persistence and orchestration.
 
 ## Manual acquisition
 
@@ -199,6 +201,35 @@ The command reports source and persistence failures without a traceback and
 returns exit code 1. It does not schedule acquisitions, retry failures,
 deduplicate across sources, or perform filtering or AI analysis.
 
+## Complete Phase 2 pipeline
+
+Run acquisition, lifecycle reconciliation, logical identity resolution, and
+deterministic filtering with one command:
+
+```powershell
+.\.venv\Scripts\job-matcher.exe run-lever-pipeline `
+  --site example `
+  --company "Example Company" `
+  --database jobs.sqlite3 `
+  --filter-policy private/filter_policy.toml
+```
+
+The command loads and validates the policy before acquisition, explicitly
+initializes or validates SQLite, and then runs each Phase 2 stage in order. Its
+summary distinguishes postings acquired in the current source snapshot, source
+postings resolved during the current identity stage, active catalog records
+evaluated during filtering, and unique logical jobs eligible after aggregation.
+
+Phase 2 deliberately reevaluates every active linked posting in the persisted
+catalog after each acquisition. Filter decisions and identity evidence remain
+transient. Persisted processing state and targeted reevaluation may be added if
+later workflows require them.
+
+Each completed stage retains its own durability boundary. Snapshot reconciliation
+is atomic, identity links are durable, and a later filtering failure does not
+roll back completed persistence or identity work. The entire pipeline is not one
+database transaction.
+
 ## Logical identity
 
 Logical identity resolution operates only on persisted normalized jobs. It may
@@ -216,7 +247,7 @@ and normal source-field changes do not move them.
 
 The initial resolver performs straightforward in-memory comparisons. It has no
 provider-specific behavior, fuzzy matching, evidence storage, or performance
-indexing. CLI integration is deferred to a later Phase 2 issue.
+indexing.
 
 ## Filter policy
 
@@ -234,10 +265,10 @@ nonempty `include_any` requires at least one matching term, independently for
 each configured field. Any exclusion match rejects the posting.
 
 The evaluator processes exactly the linked normalized postings supplied by its
-caller. Persistence or orchestration must select active postings. Decisions are
-currently transient, and a logical job remains eligible when any supplied
-representation is eligible. The evaluator does not rank jobs or inspect
-source-specific raw payloads.
+caller. Pipeline orchestration selects every active linked posting currently in
+the catalog. Decisions are transient, and a logical job remains eligible when
+any active representation is eligible. The evaluator does not rank jobs or
+inspect source-specific raw payloads.
 
 ## Project layout
 

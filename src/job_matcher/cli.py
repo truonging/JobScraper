@@ -8,7 +8,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from job_matcher import acquisition
+from job_matcher import acquisition, pipeline
+from job_matcher.filter_policy import (
+    FilterPolicy,
+    FilterPolicyError,
+    load_filter_policy,
+)
+from job_matcher.filtering import DeterministicFilterEvaluator
+from job_matcher.identity import IdentityResolver
 from job_matcher.ports import PersistenceError, SourceAcquisitionError
 from job_matcher.sources.lever import DEFAULT_API_BASE_URL, LeverJobSource
 from job_matcher.sqlite_repository import SQLiteJobRepository
@@ -23,16 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
         "acquire-lever",
         help="acquire one Lever site into SQLite",
     )
-    acquire_lever.add_argument("--site", required=True, type=_non_blank)
-    acquire_lever.add_argument("--company", required=True, type=_non_blank)
-    acquire_lever.add_argument("--database", required=True, type=Path)
-    acquire_lever.add_argument(
-        "--api-base-url",
-        default=DEFAULT_API_BASE_URL,
-        type=_https_url_without_query,
+    _add_lever_arguments(acquire_lever)
+
+    run_lever_pipeline = commands.add_parser(
+        "run-lever-pipeline",
+        help="run the complete Phase 2 pipeline for one Lever site",
     )
-    acquire_lever.add_argument("--timeout-seconds", default=10.0, type=_positive_float)
-    acquire_lever.add_argument("--page-size", default=100, type=_positive_int)
+    _add_lever_arguments(run_lever_pipeline)
+    run_lever_pipeline.add_argument("--filter-policy", required=True, type=Path)
     return parser
 
 
@@ -42,17 +47,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "acquire-lever":
         return _acquire_lever(arguments)
+    if arguments.command == "run-lever-pipeline":
+        return _run_lever_pipeline(arguments)
     raise AssertionError(f"unhandled command: {arguments.command}")
 
 
 def _acquire_lever(arguments: argparse.Namespace) -> int:
-    source = LeverJobSource(
-        site=arguments.site,
-        company=arguments.company,
-        api_base_url=arguments.api_base_url,
-        timeout_seconds=arguments.timeout_seconds,
-        page_size=arguments.page_size,
-    )
+    source = _lever_source(arguments)
     repository = SQLiteJobRepository(arguments.database)
 
     try:
@@ -67,6 +68,62 @@ def _acquire_lever(arguments: argparse.Namespace) -> int:
         f"in {arguments.database}"
     )
     return 0
+
+
+def _run_lever_pipeline(arguments: argparse.Namespace) -> int:
+    source = _lever_source(arguments)
+    repository = SQLiteJobRepository(arguments.database)
+
+    try:
+        policy = _load_filter_policy(arguments.filter_policy)
+        repository.initialize_schema()
+        result = pipeline.run_job_pipeline(
+            source,
+            repository,
+            IdentityResolver(repository),
+            DeterministicFilterEvaluator(policy),
+        )
+    except (FilterPolicyError, SourceAcquisitionError, PersistenceError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Pipeline completed: acquired {result.acquired_count} postings; "
+        f"resolved {result.resolved_count} source postings; "
+        f"evaluated {result.evaluated_count} active catalog records; "
+        f"eligible {result.eligible_count} logical jobs"
+    )
+    return 0
+
+
+def _lever_source(arguments: argparse.Namespace) -> LeverJobSource:
+    return LeverJobSource(
+        site=arguments.site,
+        company=arguments.company,
+        api_base_url=arguments.api_base_url,
+        timeout_seconds=arguments.timeout_seconds,
+        page_size=arguments.page_size,
+    )
+
+
+def _load_filter_policy(path: Path) -> FilterPolicy:
+    try:
+        return load_filter_policy(path)
+    except OSError as error:
+        raise FilterPolicyError(f"could not read filter policy: {path}") from error
+
+
+def _add_lever_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--site", required=True, type=_non_blank)
+    parser.add_argument("--company", required=True, type=_non_blank)
+    parser.add_argument("--database", required=True, type=Path)
+    parser.add_argument(
+        "--api-base-url",
+        default=DEFAULT_API_BASE_URL,
+        type=_https_url_without_query,
+    )
+    parser.add_argument("--timeout-seconds", default=10.0, type=_positive_float)
+    parser.add_argument("--page-size", default=100, type=_positive_int)
 
 
 def _non_blank(value: str) -> str:
