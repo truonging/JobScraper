@@ -5,7 +5,7 @@
 Phase 1 is complete and Phase 2 is in progress. The project includes
 source-independent full-snapshot acquisition contracts, a synchronous Lever
 source adapter, a SQLite persistence adapter, a manual acquisition command,
-and foundational lifecycle, logical-identity, and filter-policy contracts under
+and lifecycle, logical-identity, and deterministic filtering components under
 `src/job_matcher/`, with tests under `tests/`. SQLite schema version 2 persists
 current source-posting lifecycle state and successful source-scope checkpoints.
 
@@ -150,11 +150,17 @@ Phase 2 deterministic filtering is limited to clearly unsuitable postings and
 uses source-independent normalized fields. Its version 1 TOML policy contains
 literal title, location, and description inclusion/exclusion terms plus exact
 company exclusions. Matching uses Unicode case folding and collapsed whitespace;
-an empty inclusion list imposes no requirement. Policy files receive only a
-SHA-256 identifier of their exact contents for provenance. Filter evaluation,
-scoring, ranking, model choice, prompts, and human-review requirements remain
-deferred. Neither an AI provider nor a job source controls final workflow
-decisions.
+an empty inclusion list imposes no requirement, and every nonempty inclusion
+group must independently match. Policy files receive only a SHA-256 identifier
+of their exact contents for provenance.
+
+The evaluator processes the linked source postings supplied by orchestration and
+returns one transient decision per representation. Persistence or orchestration
+selects active postings. A logical job proceeds when at least one supplied active
+representation is eligible. Filtering does not inspect raw source payloads or
+contain provider-specific behavior. Persisted decisions, scoring, ranking, model
+choice, prompts, and human-review requirements remain deferred. Neither an AI
+provider nor a job source controls final workflow decisions.
 
 ### Resume tailoring and rendering
 
@@ -198,7 +204,7 @@ The following remain open until the phase that needs them:
 - canonical job and candidate-profile schemas;
 - persistence technology beyond Phase 1 and future schema evolution;
 - manual logical-job merge, split, unlink, and candidate-review workflows;
-- deterministic filter evaluation and processing order;
+- deterministic-filter orchestration and persisted decision history;
 - AI providers, models, prompts, evaluation structure, and ranking policy;
 - scheduling, retries, and deployment;
 - user interface and human-review workflow;
