@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -9,6 +10,7 @@ from urllib.error import URLError
 import pytest
 
 from job_matcher import cli
+from job_matcher.catalog import SourceJobStatus
 from job_matcher.models import SourceJobKey
 from job_matcher.sources import lever
 from job_matcher.sqlite_repository import SQLiteJobRepository
@@ -66,11 +68,18 @@ def test_cli_acquires_into_sqlite_and_rerun_updates_current_record(
 ) -> None:
     database_path = tmp_path / "jobs.sqlite3"
     responses = [[posting()], [posting(title="Senior Software Engineer")]]
+    retrieval_times = iter(
+        [
+            datetime(2026, 9, 8, 12, 30, tzinfo=UTC),
+            datetime(2026, 9, 8, 13, 30, tzinfo=UTC),
+        ]
+    )
 
     def fake_urlopen(*_args: Any, **_kwargs: Any) -> FakeResponse:
         return FakeResponse(responses.pop(0))
 
     monkeypatch.setattr(lever.urllib_request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(lever, "_utc_now", lambda: next(retrieval_times))
 
     assert cli.main(command(database_path)) == 0
     assert cli.main(command(database_path)) == 0
@@ -82,6 +91,38 @@ def test_cli_acquires_into_sqlite_and_rerun_updates_current_record(
     assert table_count(database_path, "raw_source_jobs") == 1
     assert table_count(database_path, "normalized_jobs") == 1
     assert capsys.readouterr().out.count("Acquired and stored 1 Lever jobs") == 2
+
+
+def test_cli_successful_empty_snapshot_inactivates_missing_posting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    responses = [[posting()], []]
+    retrieval_times = iter(
+        [
+            datetime(2026, 9, 8, 12, 30, tzinfo=UTC),
+            datetime(2026, 9, 8, 13, 30, tzinfo=UTC),
+        ]
+    )
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(lever.urllib_request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(lever, "_utc_now", lambda: next(retrieval_times))
+
+    assert cli.main(command(database_path)) == 0
+    assert cli.main(command(database_path)) == 0
+
+    lifecycle = SQLiteJobRepository(database_path).get_lifecycle(
+        SourceJobKey("lever", "example", "posting-123")
+    )
+    assert lifecycle is not None
+    assert lifecycle.status is SourceJobStatus.INACTIVE
+    assert lifecycle.inactive_at == datetime(2026, 9, 8, 13, 30, tzinfo=UTC)
+    assert "Acquired and stored 0 Lever jobs" in capsys.readouterr().out
 
 
 def test_cli_treats_zero_jobs_as_success(

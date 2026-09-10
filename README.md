@@ -120,6 +120,8 @@ progress. The project includes source-independent full-snapshot acquisition
 contracts, a synchronous adapter for Lever's public Postings API, SQLite
 persistence, a manual acquisition command, and foundational contracts for
 source-posting lifecycle, logical identity, and deterministic filter policies.
+SQLite schema version 2 reconciles successful source snapshots into current job
+and lifecycle state.
 
 Filtering, LLM integration, resume generation, and application workflows remain
 outside the current implementation.
@@ -168,16 +170,27 @@ Acquire all published jobs from one Lever site into SQLite:
 The command explicitly creates or validates the SQLite schema before fetching.
 The database path's parent directory must already exist. Repeated acquisitions
 update the current raw and normalized records for each Lever posting ID rather
-than creating historical copies.
+than creating historical copies. A posting becomes inactive when it is absent
+from one later successful full snapshot and is reactivated if it reappears.
+
+Existing schema version 1 databases are migrated transactionally to version 2
+during explicit initialization. Because version 1 retained only the latest
+retrieval, migrated jobs use that retrieval time for both their initial
+`first_seen_at` and `last_seen_at` lifecycle values.
+
+Snapshot timestamps must increase strictly within each source scope. A snapshot
+whose `retrieved_at` is equal to or earlier than the last successful snapshot is
+rejected without changing stored jobs, lifecycle state, or the scope checkpoint.
+This is a Phase 2 persistence invariant and may be reconsidered if replay support
+is needed later.
 
 The global Lever API is used by default. Use `--api-base-url
 https://api.eu.lever.co/v0/postings` for an EU-hosted Lever site. Optional
 `--timeout-seconds` and `--page-size` arguments control each synchronous fetch.
 
 The command reports source and persistence failures without a traceback and
-returns exit code 1. It does not schedule acquisitions, retry failures, remove
-jobs missing from later fetches, track lifecycle, deduplicate across sources, or
-perform filtering or AI analysis.
+returns exit code 1. It does not schedule acquisitions, retry failures,
+deduplicate across sources, or perform filtering or AI analysis.
 
 ## Filter policy
 

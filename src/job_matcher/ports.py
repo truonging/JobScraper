@@ -1,8 +1,8 @@
-"""Boundary interfaces for Phase 1 acquisition and persistence."""
+"""Boundary interfaces for acquisition and persistence."""
 
-from collections.abc import Sequence
 from typing import Protocol
 
+from job_matcher.catalog import SourceJobLifecycle
 from job_matcher.models import AcquiredJob, SourceJobKey, SourceSnapshot
 
 
@@ -25,10 +25,14 @@ class JobSource(Protocol):
 class JobRepository(Protocol):
     """Store and retrieve acquired jobs without exposing storage details."""
 
-    def upsert_batch(self, jobs: Sequence[AcquiredJob]) -> None:
-        """Atomically insert or update a batch by source-local key."""
+    def reconcile_snapshot(self, snapshot: SourceSnapshot) -> None:
+        """Atomically store a complete snapshot and reconcile lifecycle state."""
         ...
 
     def get(self, key: SourceJobKey) -> AcquiredJob | None:
         """Return the current record for a source-local key, if present."""
+        ...
+
+    def get_lifecycle(self, key: SourceJobKey) -> SourceJobLifecycle | None:
+        """Return current source-posting lifecycle state, if present."""
         ...
