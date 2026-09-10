@@ -672,3 +672,35 @@ def test_resolver_can_link_to_inactive_posting_from_another_source(
     assert len(resolutions) == 1
     assert resolutions[0].created_logical_job is False
     assert resolutions[0].link.logical_job_id == LOGICAL_ID_1
+
+
+def test_list_active_linked_jobs_excludes_inactive_and_unlinked_records(
+    tmp_path: Path,
+) -> None:
+    repository = initialized_repository(tmp_path / "jobs.sqlite3")
+    ashby = make_job(source="ashby", source_job_id="active-ashby")
+    greenhouse = make_job(source="greenhouse", source_job_id="active-greenhouse")
+    lever = make_job(source="lever", source_job_id="inactive-lever")
+    unlinked = make_job(source="lever", source_job_id="active-unlinked")
+    repository.reconcile_snapshot(make_snapshot(ashby, source="ashby"))
+    repository.reconcile_snapshot(make_snapshot(greenhouse, source="greenhouse"))
+    repository.reconcile_snapshot(make_snapshot(lever, unlinked, source="lever"))
+    repository.assign_logical_job(ashby.normalized.key, LOGICAL_ID_1, T1)
+    repository.assign_logical_job(greenhouse.normalized.key, LOGICAL_ID_1, T1)
+    repository.assign_logical_job(lever.normalized.key, LOGICAL_ID_2, T1)
+    observed_unlinked = make_job(
+        source="lever",
+        source_job_id="active-unlinked",
+        retrieved_at=T2,
+    )
+    repository.reconcile_snapshot(
+        make_snapshot(observed_unlinked, source="lever", retrieved_at=T2)
+    )
+
+    active = repository.list_active_linked_jobs()
+
+    assert [item.normalized.key for item in active] == [
+        ashby.normalized.key,
+        greenhouse.normalized.key,
+    ]
+    assert all(item.link.logical_job_id == LOGICAL_ID_1 for item in active)

@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Phase 1 is complete and Phase 2 is in progress. The project includes
+Phases 1 and 2 are complete. The project includes
 source-independent full-snapshot acquisition contracts, a synchronous Lever
 source adapter, a SQLite persistence adapter, a manual acquisition command,
 and lifecycle, logical-identity, and deterministic filtering components under
@@ -10,7 +10,7 @@ and lifecycle, logical-identity, and deterministic filtering components under
 current source-posting lifecycle state and successful source-scope checkpoints.
 
 This document records the system's current high-level responsibilities and
-boundaries. The Phase 1 choices recorded here do not decide additional external
+boundaries. The choices recorded here do not decide additional external
 providers, later user interfaces, AI models, scoring rules, or document formats.
 
 ## System responsibilities
@@ -87,11 +87,20 @@ persistence, deterministic processing, AI services, and user-facing interfaces.
 It owns sequencing and recovery decisions; interfaces such as a CLI, API, or UI
 do not contain source or persistence implementations.
 
-The application service fetches a complete source snapshot and passes it to
-persistence for one atomic reconciliation. The manual CLI is the composition root: it
-constructs the Lever and SQLite adapters, explicitly initializes or validates
-the database schema, and invokes the application service. Scheduling, retries,
-and later processing stages remain deferred.
+The acquisition service fetches a complete source snapshot and passes it to
+persistence for one atomic reconciliation. The Phase 2 pipeline then resolves
+unlinked source postings, retrieves active linked postings, evaluates them, and
+aggregates unique eligible logical jobs. The manual CLI is the composition root:
+it constructs the Lever, SQLite, identity, and filtering components, explicitly
+initializes or validates the database schema, and invokes the application
+service.
+
+Each stage retains its own failure and durability boundary; the pipeline is not
+one transaction. Phase 2 deliberately reevaluates the complete active linked
+catalog after each acquisition. This is a simple current behavior rather than a
+permanent incremental-processing strategy. Scheduling, retries, persisted
+processing state, targeted reevaluation, and later processing stages remain
+deferred.
 
 ### Job identity and state
 
@@ -155,12 +164,13 @@ group must independently match. Policy files receive only a SHA-256 identifier
 of their exact contents for provenance.
 
 The evaluator processes the linked source postings supplied by orchestration and
-returns one transient decision per representation. Persistence or orchestration
-selects active postings. A logical job proceeds when at least one supplied active
-representation is eligible. Filtering does not inspect raw source payloads or
-contain provider-specific behavior. Persisted decisions, scoring, ranking, model
-choice, prompts, and human-review requirements remain deferred. Neither an AI
-provider nor a job source controls final workflow decisions.
+returns one transient decision per representation. Pipeline orchestration selects
+every active linked posting in the persisted catalog. A logical job proceeds when
+at least one active representation is eligible. Filtering does not inspect raw
+source payloads or contain provider-specific behavior. Persisted decisions,
+incremental reevaluation, scoring, ranking, model choice, prompts, and
+human-review requirements remain deferred. Neither an AI provider nor a job
+source controls final workflow decisions.
 
 ### Resume tailoring and rendering
 
@@ -204,7 +214,7 @@ The following remain open until the phase that needs them:
 - canonical job and candidate-profile schemas;
 - persistence technology beyond Phase 1 and future schema evolution;
 - manual logical-job merge, split, unlink, and candidate-review workflows;
-- deterministic-filter orchestration and persisted decision history;
+- persisted filter-decision history and targeted reevaluation;
 - AI providers, models, prompts, evaluation structure, and ranking policy;
 - scheduling, retries, and deployment;
 - user interface and human-review workflow;

@@ -72,3 +72,15 @@ class IdentityRepository(Protocol):
     def get_logical_job_activity(self, logical_job_id: LogicalJobId) -> bool | None:
         """Return derived activity, or None when the logical job does not exist."""
         ...
+
+
+class PipelineRepository(Protocol):
+    """Persistence operations used directly by the Phase 2 pipeline."""
+
+    def reconcile_snapshot(self, snapshot: SourceSnapshot) -> None:
+        """Atomically store a complete snapshot and reconcile lifecycle state."""
+        ...
+
+    def list_active_linked_jobs(self) -> Sequence[LinkedSourceJob]:
+        """Return active normalized postings with their logical assignments."""
+        ...
