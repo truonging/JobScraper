@@ -167,7 +167,9 @@ def test_initialize_schema_is_idempotent(tmp_path: Path) -> None:
     repository.initialize_schema()
 
 
-@pytest.mark.parametrize("operation", ["get", "get_lifecycle", "reconcile"])
+@pytest.mark.parametrize(
+    "operation", ["get", "get_lifecycle", "list_active_linked_jobs", "reconcile"]
+)
 def test_operations_require_explicit_initialization(
     tmp_path: Path, operation: str
 ) -> None:
@@ -179,6 +181,8 @@ def test_operations_require_explicit_initialization(
             repository.get(make_job().normalized.key)
         elif operation == "get_lifecycle":
             repository.get_lifecycle(make_job().normalized.key)
+        elif operation == "list_active_linked_jobs":
+            repository.list_active_linked_jobs()
         else:
             repository.reconcile_snapshot(make_snapshot())
 

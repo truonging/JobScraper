@@ -99,6 +99,28 @@ def table_count(database_path: Path, table_name: str) -> int:
     return int(row[0])
 
 
+def persisted_state(
+    database_path: Path,
+) -> tuple[int, dict[str, list[tuple[Any, ...]]]]:
+    tables = (
+        "raw_source_jobs",
+        "normalized_jobs",
+        "source_scope_state",
+        "source_job_lifecycle",
+        "logical_jobs",
+        "source_job_links",
+    )
+    with sqlite3.connect(database_path) as connection:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        rows = {
+            table: connection.execute(
+                f"SELECT * FROM {table} ORDER BY rowid"
+            ).fetchall()
+            for table in tables
+        }
+    return version, rows
+
+
 def test_cli_acquires_into_sqlite_and_rerun_updates_current_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -290,6 +312,97 @@ def test_pipeline_cli_treats_an_empty_snapshot_as_success(
     assert captured.err == ""
 
 
+def test_pipeline_cli_empty_snapshot_inactivates_job_and_removes_it_from_filtering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    policy_path = tmp_path / "filter_policy.toml"
+    write_policy(policy_path)
+    responses = [[posting()], []]
+    retrieval_times = iter(
+        [
+            datetime(2026, 9, 8, 12, 30, tzinfo=UTC),
+            datetime(2026, 9, 8, 13, 30, tzinfo=UTC),
+        ]
+    )
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(lever.urllib_request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(lever, "_utc_now", lambda: next(retrieval_times))
+
+    assert cli.main(pipeline_command(database_path, policy_path)) == 0
+    capsys.readouterr()
+
+    assert cli.main(pipeline_command(database_path, policy_path)) == 0
+
+    captured = capsys.readouterr()
+    repository = SQLiteJobRepository(database_path)
+    key = SourceJobKey("lever", "example", "posting-123")
+    lifecycle = repository.get_lifecycle(key)
+    assert lifecycle is not None
+    assert lifecycle.status is SourceJobStatus.INACTIVE
+    assert repository.list_active_linked_jobs() == ()
+    assert len(repository.list_linked_jobs()) == 1
+    assert "acquired 0 postings" in captured.out
+    assert "evaluated 0 active catalog records" in captured.out
+    assert "eligible 0 logical jobs" in captured.out
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    ("second_outcome", "expected_error"),
+    [
+        (URLError("unavailable"), "error: Lever request failed\n"),
+        ({}, "error: Lever postings response must be a JSON array\n"),
+    ],
+    ids=("request-failure", "malformed-response"),
+)
+def test_pipeline_cli_acquisition_failure_preserves_all_persisted_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    second_outcome: Any,
+    expected_error: str,
+) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    policy_path = tmp_path / "filter_policy.toml"
+    write_policy(policy_path)
+    call_count = 0
+    retrieval_times = iter(
+        [
+            datetime(2026, 9, 8, 12, 30, tzinfo=UTC),
+            datetime(2026, 9, 8, 13, 30, tzinfo=UTC),
+        ]
+    )
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return FakeResponse([posting()])
+        if isinstance(second_outcome, BaseException):
+            raise second_outcome
+        return FakeResponse(second_outcome)
+
+    monkeypatch.setattr(lever.urllib_request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(lever, "_utc_now", lambda: next(retrieval_times))
+
+    assert cli.main(pipeline_command(database_path, policy_path)) == 0
+    capsys.readouterr()
+    state_before = persisted_state(database_path)
+
+    assert cli.main(pipeline_command(database_path, policy_path)) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == expected_error
+    assert persisted_state(database_path) == state_before
+
+
 def test_pipeline_cli_loads_policy_before_acquisition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -317,6 +430,33 @@ def test_pipeline_cli_loads_policy_before_acquisition(
     assert captured.out == ""
     assert "could not read filter policy" in captured.err
     assert not (tmp_path / "jobs.sqlite3").exists()
+
+
+def test_pipeline_cli_reports_malformed_toml_before_acquisition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    policy_path = tmp_path / "filter_policy.toml"
+    policy_path.write_text("version = [1", encoding="utf-8")
+    requested = False
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        nonlocal requested
+        requested = True
+        return FakeResponse([])
+
+    monkeypatch.setattr(lever.urllib_request, "urlopen", fake_urlopen)
+
+    result = cli.main(pipeline_command(database_path, policy_path))
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert requested is False
+    assert captured.out == ""
+    assert captured.err == "error: filter policy must be valid UTF-8 TOML\n"
+    assert not database_path.exists()
 
 
 def test_pipeline_cli_translates_source_failure(
