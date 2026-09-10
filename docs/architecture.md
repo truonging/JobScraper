@@ -6,7 +6,8 @@ Phase 1 is complete and Phase 2 is in progress. The project includes
 source-independent full-snapshot acquisition contracts, a synchronous Lever
 source adapter, a SQLite persistence adapter, a manual acquisition command,
 and foundational lifecycle, logical-identity, and filter-policy contracts under
-`src/job_matcher/`, with tests under `tests/`.
+`src/job_matcher/`, with tests under `tests/`. SQLite schema version 2 persists
+current source-posting lifecycle state and successful source-scope checkpoints.
 
 This document records the system's current high-level responsibilities and
 boundaries. The Phase 1 choices recorded here do not decide additional external
@@ -65,10 +66,18 @@ Stored source facts, normalized values, candidate facts, AI interpretations,
 and generated artifacts have distinct ownership even if a future storage
 technology keeps some of them together physically.
 
-Phase 1 uses SQLite behind the persistence interface. It stores separate current
-raw and normalized records linked by source-local identity. Reacquisition updates
-those current records atomically; historical versions and lifecycle tracking are
-deferred.
+SQLite remains behind the persistence interface. Schema version 2 stores
+separate current raw, normalized, and source-posting lifecycle records linked by
+source-local identity. It also stores the latest successful retrieval time for
+each source scope. Historical source versions and lifecycle events are not
+retained.
+
+Schema initialization is explicit. A valid version 1 database migrates
+transactionally to version 2 while preserving current source records. Since
+version 1 did not retain observation history, migration uses each posting's
+current retrieval time as both its first- and last-seen time. Version 2 also
+contains logical-job and source-link tables, but assignment and deduplication
+remain owned by a later Phase 2 stage.
 
 ### Application orchestration
 
@@ -77,8 +86,8 @@ persistence, deterministic processing, AI services, and user-facing interfaces.
 It owns sequencing and recovery decisions; interfaces such as a CLI, API, or UI
 do not contain source or persistence implementations.
 
-The application service fetches a complete source snapshot and passes its jobs
-to persistence as one atomic batch. The manual CLI is the composition root: it
+The application service fetches a complete source snapshot and passes it to
+persistence for one atomic reconciliation. The manual CLI is the composition root: it
 constructs the Lever and SQLite adapters, explicitly initializes or validates
 the database schema, and invokes the application service. Scheduling, retries,
 and later processing stages remain deferred.
@@ -96,6 +105,11 @@ inactive after one successful snapshot in which it is absent. Failed or
 malformed acquisitions cannot change lifecycle state, and later observation
 reactivates the posting. Lifecycle timestamps record first observation, most
 recent observation, and the successful snapshot that established inactivity.
+
+Successful snapshots for a source scope must have strictly increasing retrieval
+times. Equal or older snapshots are rejected without changing current source
+records, lifecycle state, or the source-scope checkpoint. This is the current
+Phase 2 persistence invariant rather than a permanent replay policy.
 
 Logical jobs use opaque stable UUIDs. A durable source-posting link assigns each
 source posting to one logical job; ordinary source-field changes do not move an
@@ -175,7 +189,6 @@ The following remain open until the phase that needs them:
 - additional external job sources and acquisition methods;
 - canonical job and candidate-profile schemas;
 - persistence technology beyond Phase 1 and future schema evolution;
-- SQLite lifecycle and logical-identity persistence and schema migration;
 - deterministic identity evidence, matching, and logical-job assignment;
 - deterministic filter evaluation and processing order;
 - AI providers, models, prompts, evaluation structure, and ranking policy;

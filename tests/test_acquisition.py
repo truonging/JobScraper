@@ -70,17 +70,20 @@ class RecordingRepository:
     ) -> None:
         self.error = error
         self.events = events if events is not None else []
-        self.batches: list[Sequence[AcquiredJob]] = []
+        self.snapshots: list[SourceSnapshot] = []
 
-    def upsert_batch(self, jobs: Sequence[AcquiredJob]) -> None:
+    def reconcile_snapshot(self, snapshot: SourceSnapshot) -> None:
         self.events.append("persist")
-        self.batches.append(jobs)
+        self.snapshots.append(snapshot)
         if self.error is not None:
             raise self.error
 
     def get(self, key: object) -> AcquiredJob | None:
         del key
         return None
+
+    def get_lifecycle(self, key: object) -> None:
+        del key
 
 
 def test_acquire_and_persist_stores_empty_successful_batch() -> None:
@@ -90,7 +93,7 @@ def test_acquire_and_persist_stores_empty_successful_batch() -> None:
     count = acquire_and_persist(source, repository)
 
     assert count == 0
-    assert repository.batches == [()]
+    assert repository.snapshots == [source.snapshot]
 
 
 def test_acquire_and_persist_fetches_before_storing_complete_batch() -> None:
@@ -103,7 +106,7 @@ def test_acquire_and_persist_fetches_before_storing_complete_batch() -> None:
 
     assert count == 2
     assert events == ["fetch", "persist"]
-    assert repository.batches == [jobs]
+    assert repository.snapshots == [source.snapshot]
 
 
 def test_acquisition_failure_prevents_persistence() -> None:
@@ -113,7 +116,7 @@ def test_acquisition_failure_prevents_persistence() -> None:
     with pytest.raises(SourceAcquisitionError, match="source failed"):
         acquire_and_persist(source, repository)
 
-    assert repository.batches == []
+    assert repository.snapshots == []
 
 
 def test_persistence_failure_remains_visible() -> None:
