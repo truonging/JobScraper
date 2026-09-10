@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any
@@ -17,6 +17,7 @@ from job_matcher.models import (
     NormalizedJob,
     RawSourceRecord,
     SourceJobKey,
+    SourceSnapshot,
 )
 from job_matcher.ports import SourceAcquisitionError
 
@@ -55,8 +56,8 @@ class LeverJobSource:
         self._page_size = page_size
         self._clock = clock or _utc_now
 
-    def fetch_jobs(self) -> Sequence[AcquiredJob]:
-        """Return every published job available from the configured Lever site."""
+    def fetch_snapshot(self) -> SourceSnapshot:
+        """Return a complete snapshot of the configured Lever site."""
         retrieved_at = self._clock()
         if not isinstance(retrieved_at, datetime) or retrieved_at.tzinfo is not UTC:
             raise SourceAcquisitionError(
@@ -112,7 +113,12 @@ class LeverJobSource:
                 break
             skip += self._page_size
 
-        return tuple(jobs)
+        return SourceSnapshot(
+            source="lever",
+            source_scope=self._site,
+            retrieved_at=retrieved_at,
+            jobs=tuple(jobs),
+        )
 
     def _page_url(self, skip: int) -> str:
         query = urlencode({"mode": "json", "skip": skip, "limit": self._page_size})

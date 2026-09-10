@@ -122,3 +122,39 @@ class AcquiredJob:
             raise ContractValidationError(
                 "normalized and raw records must use the same retrieved_at"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSnapshot:
+    """One successfully completed full retrieval of a configured source scope."""
+
+    source: str
+    source_scope: str
+    retrieved_at: datetime
+    jobs: tuple[AcquiredJob, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_blank(self.source, "source")
+        _require_non_blank(self.source_scope, "source_scope")
+        _require_canonical_utc(self.retrieved_at, "retrieved_at")
+        if not isinstance(self.jobs, tuple):
+            raise ContractValidationError("jobs must be an immutable tuple")
+
+        seen_keys: set[SourceJobKey] = set()
+        for job in self.jobs:
+            if not isinstance(job, AcquiredJob):
+                raise ContractValidationError("jobs must contain AcquiredJob records")
+            key = job.normalized.key
+            if key.source != self.source or key.source_scope != self.source_scope:
+                raise ContractValidationError(
+                    "every job must belong to the snapshot source and source_scope"
+                )
+            if job.normalized.retrieved_at != self.retrieved_at:
+                raise ContractValidationError(
+                    "every job must use the snapshot retrieved_at"
+                )
+            if key in seen_keys:
+                raise ContractValidationError(
+                    "a source job key may appear only once in a snapshot"
+                )
+            seen_keys.add(key)

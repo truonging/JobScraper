@@ -115,9 +115,11 @@ candidate facts.
 
 ## Current status
 
-**Phase 1: Acquisition and persistence** is complete. The project includes
-source-independent acquisition contracts, a synchronous adapter for Lever's
-public Postings API, SQLite persistence, and a manual acquisition command.
+**Phase 1: Acquisition and persistence** is complete, and **Phase 2** is in
+progress. The project includes source-independent full-snapshot acquisition
+contracts, a synchronous adapter for Lever's public Postings API, SQLite
+persistence, a manual acquisition command, and foundational contracts for
+source-posting lifecycle, logical identity, and deterministic filter policies.
 
 Filtering, LLM integration, resume generation, and application workflows remain
 outside the current implementation.
@@ -149,8 +151,8 @@ Run from the project root:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-The tests cover package imports, acquisition contracts, the Lever adapter, and
-SQLite persistence and orchestration.
+The tests cover package imports, acquisition and Phase 2 contracts, filter-policy
+loading, the Lever adapter, and SQLite persistence and orchestration.
 
 ## Manual acquisition
 
@@ -177,11 +179,28 @@ returns exit code 1. It does not schedule acquisitions, retry failures, remove
 jobs missing from later fetches, track lifecycle, deduplicate across sources, or
 perform filtering or AI analysis.
 
+## Filter policy
+
+Phase 2 defines a small version 1 TOML policy contract. A synthetic example is
+available at `examples/filter_policy.example.toml`. Keep a real personal policy
+at `private/filter_policy.toml`; the `private/` directory is excluded from
+version control.
+
+Matching is case-insensitive using Unicode case folding after trimming and
+collapsing whitespace. Title, location, and description rules use literal
+substring matching. Company exclusions use exact normalized-name matching.
+Terms are not regular expressions, and the policy does not use stemming, fuzzy
+matching, synonyms, or AI. An empty `include_any` imposes no requirement; a
+nonempty `include_any` requires at least one matching term. Any exclusion match
+rejects the posting. The evaluator that applies these rules is deferred to a
+later Phase 2 issue.
+
 ## Project layout
 
 - `src/job_matcher/`: application package, including acquisition contracts, the
   Lever source adapter, SQLite persistence adapter, orchestration, and CLI.
 - `tests/`: automated tests.
+- `examples/`: synthetic, safe-to-commit configuration examples.
 - `pyproject.toml`: packaging, development dependencies, pytest, and Ruff settings.
 - [AGENTS.md](AGENTS.md): contributor instructions.
 - [Architecture](docs/architecture.md): high-level responsibilities and boundaries.

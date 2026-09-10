@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import Protocol
 
-from job_matcher.models import AcquiredJob, SourceJobKey
+from job_matcher.models import AcquiredJob, SourceJobKey, SourceSnapshot
 
 
 class SourceAcquisitionError(RuntimeError):
@@ -15,10 +15,10 @@ class PersistenceError(RuntimeError):
 
 
 class JobSource(Protocol):
-    """Fetch and normalize jobs from one configured external source."""
+    """Fetch one complete snapshot from a configured external source."""
 
-    def fetch_jobs(self) -> Sequence[AcquiredJob]:
-        """Return the jobs available from the configured source."""
+    def fetch_snapshot(self) -> SourceSnapshot:
+        """Return a successful full snapshot, including when it is empty."""
         ...
 
 

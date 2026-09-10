@@ -50,7 +50,7 @@ def install_pages(
     return requests
 
 
-def test_fetch_jobs_normalizes_complete_posting_and_preserves_raw_json(
+def test_fetch_snapshot_normalizes_complete_posting_and_preserves_raw_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw_posting = posting()
@@ -62,8 +62,12 @@ def test_fetch_jobs_normalizes_complete_posting_and_preserves_raw_json(
         clock=lambda: RETRIEVED_AT,
     )
 
-    jobs = source.fetch_jobs()
+    snapshot = source.fetch_snapshot()
+    jobs = snapshot.jobs
 
+    assert snapshot.source == "lever"
+    assert snapshot.source_scope == "example"
+    assert snapshot.retrieved_at is RETRIEVED_AT
     assert len(jobs) == 1
     job = jobs[0]
     assert job.normalized.key.source == "lever"
@@ -99,7 +103,7 @@ def test_fetch_jobs_normalizes_complete_posting_and_preserves_raw_json(
     assert timeout == 7.5
 
 
-def test_fetch_jobs_uses_one_retrieval_time_for_every_page(
+def test_fetch_snapshot_uses_one_retrieval_time_for_every_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pages = [
@@ -114,9 +118,10 @@ def test_fetch_jobs_uses_one_retrieval_time_for_every_page(
         clock_calls += 1
         return RETRIEVED_AT
 
-    jobs = LeverJobSource(
+    snapshot = LeverJobSource(
         "example", "Example Company", page_size=2, clock=clock
-    ).fetch_jobs()
+    ).fetch_snapshot()
+    jobs = snapshot.jobs
 
     assert [job.normalized.key.source_job_id for job in jobs] == [
         "posting-1",
@@ -139,9 +144,13 @@ def test_exact_page_multiple_makes_final_empty_request(
         [[posting(id="posting-1"), posting(id="posting-2")], []],
     )
 
-    jobs = LeverJobSource(
-        "example", "Example Company", page_size=2, clock=lambda: RETRIEVED_AT
-    ).fetch_jobs()
+    jobs = (
+        LeverJobSource(
+            "example", "Example Company", page_size=2, clock=lambda: RETRIEVED_AT
+        )
+        .fetch_snapshot()
+        .jobs
+    )
 
     assert len(jobs) == 2
     assert len(requests) == 2
@@ -155,25 +164,30 @@ def test_optional_location_and_apply_url_can_be_absent(
         [[posting(categories=None, applyUrl=None, lists=None, additionalPlain="")]],
     )
 
-    job = LeverJobSource(
-        "example", "Example Company", clock=lambda: RETRIEVED_AT
-    ).fetch_jobs()[0]
+    job = (
+        LeverJobSource("example", "Example Company", clock=lambda: RETRIEVED_AT)
+        .fetch_snapshot()
+        .jobs[0]
+    )
 
     assert job.normalized.location is None
     assert job.normalized.apply_url is None
     assert job.normalized.description == "Build reliable systems."
 
 
-def test_empty_postings_response_returns_empty_sequence(
+def test_empty_postings_response_returns_successful_empty_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     install_pages(monkeypatch, [[]])
 
-    jobs = LeverJobSource(
+    snapshot = LeverJobSource(
         "example", "Example Company", clock=lambda: RETRIEVED_AT
-    ).fetch_jobs()
+    ).fetch_snapshot()
 
-    assert jobs == ()
+    assert snapshot.jobs == ()
+    assert snapshot.source == "lever"
+    assert snapshot.source_scope == "example"
+    assert snapshot.retrieved_at is RETRIEVED_AT
 
 
 @pytest.mark.parametrize(
@@ -196,7 +210,7 @@ def test_duplicate_posting_id_fails_acquisition(
     )
 
     with pytest.raises(SourceAcquisitionError, match="duplicate posting id"):
-        source.fetch_jobs()
+        source.fetch_snapshot()
 
 
 @pytest.mark.parametrize(
@@ -218,7 +232,7 @@ def test_malformed_postings_fail_acquisition(
     source = LeverJobSource("example", "Example Company", clock=lambda: RETRIEVED_AT)
 
     with pytest.raises(SourceAcquisitionError):
-        source.fetch_jobs()
+        source.fetch_snapshot()
 
 
 def test_non_utc_clock_fails_even_for_an_empty_response(
@@ -229,7 +243,7 @@ def test_non_utc_clock_fails_even_for_an_empty_response(
     source = LeverJobSource("example", "Example Company", clock=lambda: non_utc)
 
     with pytest.raises(SourceAcquisitionError, match="datetime.UTC"):
-        source.fetch_jobs()
+        source.fetch_snapshot()
 
 
 class FakeResponse:

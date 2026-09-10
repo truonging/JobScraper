@@ -41,3 +41,7 @@ Thumbs.db
 /generated_resumes/
 /output/
 /outputs/
+
+# Private discovered/verified job-source registries
+job_sources/lever_verified.json
+scripts
