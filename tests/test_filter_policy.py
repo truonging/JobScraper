@@ -57,8 +57,12 @@ def test_loads_committed_synthetic_example() -> None:
     policy = load_filter_policy(EXAMPLE_POLICY)
 
     assert policy.version == 1
-    assert policy.title.include_any == ("software engineer", "backend engineer")
-    assert policy.company.exclude == ("Example Excluded Company",)
+    assert policy.title.include_any == ()
+    assert "registered nurse" in policy.title.exclude_any
+    assert policy.location.include_any == ()
+    assert policy.company.exclude == ()
+    assert policy.description.include_any == ()
+    assert "active security clearance required" in policy.description.exclude_any
     assert policy.fingerprint == hashlib.sha256(policy_bytes).hexdigest()
 
 
@@ -69,6 +73,18 @@ def test_policy_fingerprint_changes_with_exact_file_contents(tmp_path: Path) -> 
     second = load_filter_policy(second_path)
 
     assert first.fingerprint != second.fingerprint
+
+
+@pytest.mark.parametrize("field", ["include_any", "exclude_any"])
+def test_toml_location_rules_must_remain_empty(tmp_path: Path, field: str) -> None:
+    section = "[location]\ninclude_any = []\nexclude_any = []"
+    text = valid_policy_text().replace(
+        section, section.replace(f"{field} = []", f'{field} = ["Canada"]')
+    )
+    with pytest.raises(
+        FilterPolicyError, match="Strategy H owns geographic eligibility"
+    ):
+        load_filter_policy(write_policy(tmp_path, text))
 
 
 @pytest.mark.parametrize(

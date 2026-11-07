@@ -2,16 +2,24 @@
 
 ## Status and scope
 
+Metadata enrichment adds authoritative schema v3 (two nullable normalized columns)
+and search schema v2. See [job metadata](job_metadata.md) for mappings, backfill,
+date provenance and aggregation. Screening remains version 5 and ignores these
+fields. Earlier schema-version references below describe the lifecycle design.
+
 Phases 1 and 2 are complete. The project includes
-source-independent full-snapshot acquisition contracts, a synchronous Lever
-source adapter, a SQLite persistence adapter, a manual acquisition command,
+source-independent full-snapshot acquisition contracts, synchronous Lever and
+Greenhouse adapters, a SQLite persistence adapter, manual acquisition commands,
 and lifecycle, logical-identity, and deterministic filtering components under
-`src/job_matcher/`, with tests under `tests/`. SQLite schema version 2 persists
-current source-posting lifecycle state and successful source-scope checkpoints.
+`src/job_matcher/`, with tests under `tests/`. Authoritative SQLite schema version
+3 preserves the version 2 lifecycle and checkpoint design and adds nullable
+employment/workplace metadata. Derived search schema version 2 serves the
+read-only Streamlit dashboard.
 
 This document records the system's current high-level responsibilities and
 boundaries. The choices recorded here do not decide additional external
-providers, later user interfaces, AI models, scoring rules, or document formats.
+providers beyond Lever/Greenhouse, future interfaces, AI models, scoring rules,
+or document formats.
 
 ## System responsibilities
 
@@ -52,10 +60,62 @@ Phase 1 uses Lever's public Postings API as its first structured source. The
 adapter acquires and normalizes published postings without accessing
 persistence.
 
+Lever retries only explicitly classified transient failures at the individual
+page-request boundary, with at most three attempts and bounded exponential
+backoff. Parsing and normalization failures are not retryable. If any page still
+fails, the adapter returns no snapshot and persistence receives no partial batch.
+
 The normalized representation and raw source record share a source-local key
 and retrieval time. A successful adapter acquisition returns a complete
 `SourceSnapshot` for one source scope, including when the snapshot contains no
 postings. Failed or malformed acquisitions do not produce a snapshot.
+
+`NormalizedJob.description` must be a string, but an empty string is valid and
+represents unavailable substantive source content. Adapters preserve available
+description text without fabricating content or substituting generic boilerplate.
+Descriptionless postings remain in successful snapshots and participate normally
+in persistence, lifecycle tracking, logical identity, and deterministic filtering.
+Required source identity, company, title, URL, and retrieval metadata retain their
+validation requirements. AI eligibility for insufficient descriptions is deferred
+to Phase 3.
+
+### Greenhouse acquisition
+
+`GreenhouseJobSource` fetches the public complete-board jobs response, validates
+the full array, and returns the existing source-independent contracts. Metadata
+totals are optional consistency checks, not required completeness fields. A
+failed request or posting normalization never yields a partial snapshot.
+Persistence and identity implementations are unchanged; source-local identity
+remains the `(source, source_scope, source_job_id)` triple.
+
+The complete-board endpoint is `/v1/boards/{board_token}/jobs?content=true`;
+the adapter does not invent pagination. A supplied `meta.total` must agree with
+the jobs array. Invalid envelopes, duplicate posting IDs or malformed postings
+fail the entire snapshot; an empty successful board reconciles an empty scope.
+Posting identity uses the public posting `id`, not `internal_job_id`; prospect
+posts with a null internal ID remain valid. Company comes from the registry,
+`absolute_url` supplies the job URL, and no application URL is invented.
+Publication metadata uses `first_published`, never `updated_at` as a fallback.
+Raw job objects remain intact and missing content becomes an empty description.
+
+Greenhouse retries transient transport failures and HTTP 408/429/500/502/503/504
+up to three attempts, with bounded backoff and Retry-After (five seconds by
+default). Longer Retry-After values fail safely; HTTP 404, TLS failures and
+malformed source data do not retry. Diagnostics expose sanitized categories.
+
+Shared validation helpers own registry loading and batch acquisition/catalog
+processing. Provider/global reporting keeps independent contributions separate
+from global logical identities. The limited Greenhouse runner is a composition
+root and does not implement source fetching, persistence, or screening policy.
+The combined IDE runner uses acquisition-only batches in Lever-then-Greenhouse
+order and invokes shared catalog processing once after both batches. Independent
+limits select the batches; the current configuration refreshes one Lever board
+and acquires the full Greenhouse registry into the existing Lever SQLite catalog.
+Unattempted scopes are preserved by the existing lifecycle rules.
+Strategy H alone enforces geographic eligibility for both sources through
+`screen_job`. Lever job-location alternatives are opening-specific evidence;
+Greenhouse employer office associations do not establish eligibility. Uncertain
+geography preserves non-geographic outcomes. No Phase 3 behavior is introduced.
 
 ### Persistence
 
@@ -66,17 +126,18 @@ Stored source facts, normalized values, candidate facts, AI interpretations,
 and generated artifacts have distinct ownership even if a future storage
 technology keeps some of them together physically.
 
-SQLite remains behind the persistence interface. Schema version 2 stores
+SQLite remains behind the persistence interface. Schema version 3 stores
 separate current raw, normalized, and source-posting lifecycle records linked by
 source-local identity. It also stores the latest successful retrieval time for
 each source scope. Historical source versions and lifecycle events are not
 retained.
 
-Schema initialization is explicit. A valid version 1 database migrates
-transactionally to version 2 while preserving current source records. Since
+Schema initialization is explicit. Valid version 1 and version 2 databases migrate
+to version 3 while preserving current source records. Since
 version 1 did not retain observation history, migration uses each posting's
 current retrieval time as both its first- and last-seen time. Version 2 also
-contains logical-job and source-link tables. Persistence can create durable
+introduced logical-job and source-link tables, retained in version 3.
+Persistence can create durable
 assignments and derive logical-job activity from linked source-posting lifecycle
 state, but it does not decide whether two postings represent the same job.
 
@@ -98,7 +159,7 @@ service.
 Each stage retains its own failure and durability boundary; the pipeline is not
 one transaction. Phase 2 deliberately reevaluates the complete active linked
 catalog after each acquisition. This is a simple current behavior rather than a
-permanent incremental-processing strategy. Scheduling, retries, persisted
+permanent incremental-processing strategy. Scheduling, workflow-level retries, persisted
 processing state, targeted reevaluation, and later processing stages remain
 deferred.
 
@@ -136,9 +197,10 @@ ambiguous URL evidence creates a separate logical job.
 An exact normalized company, title, location, and description fingerprint can
 identify a duplicate candidate but cannot automatically merge logical jobs.
 Candidate and ambiguous-match evidence is returned from resolution but is not
-persisted. The initial resolver uses direct comparisons without provider-specific
-rules, fuzzy matching, AI, caches, or specialized indexes. Manual identity
-correction and persisted candidate-review workflows remain deferred.
+persisted. The resolver builds source-independent in-memory exact-match indexes
+for each resolution pass without provider-specific rules, fuzzy matching, AI, or
+persisted identity caches. Manual identity correction and persisted
+candidate-review workflows remain deferred.
 
 ### Candidate profile
 
@@ -157,20 +219,105 @@ traceable to the inputs used to produce them.
 
 Phase 2 deterministic filtering is limited to clearly unsuitable postings and
 uses source-independent normalized fields. Its version 1 TOML policy contains
-literal title, location, and description inclusion/exclusion terms plus exact
+literal title and description inclusion/exclusion terms plus exact
 company exclusions. Matching uses Unicode case folding and collapsed whitespace;
 an empty inclusion list imposes no requirement, and every nonempty inclusion
 group must independently match. Policy files receive only a SHA-256 identifier
 of their exact contents for provenance.
+The required version 1 location rule slot must be empty; Strategy H owns
+geographic eligibility and deterministic filtering never matches location text.
 
 The evaluator processes the linked source postings supplied by orchestration and
 returns one transient decision per representation. Pipeline orchestration selects
 every active linked posting in the persisted catalog. A logical job proceeds when
 at least one active representation is eligible. Filtering does not inspect raw
-source payloads or contain provider-specific behavior. Persisted decisions,
-incremental reevaluation, scoring, ranking, model choice, prompts, and
+source payloads or contain provider-specific behavior. Authoritative decision
+history, targeted catalog reevaluation, scoring, ranking, model choice, prompts, and
 human-review requirements remain deferred. Neither an AI provider nor a job
 source controls final workflow decisions.
+
+### Pre-AI screening
+
+The separate `screening_pipeline` application service coordinates the existing
+deterministic filter and the small `screening` classifier on supplied active
+representations. `screening_sqlite` is a read-only projection adapter for the
+current schema, streaming normalized jobs, durable links, and matching raw
+records within one read transaction. It does not initialize or migrate schema.
+The offline screening script is only a composition root and report interface.
+
+Geographic raw-evidence interpretation is shared by screening callers through
+Strategy H. Structured job metadata extraction is separately shared by live
+adapters and offline backfill in `job_metadata`. Identity resolution and
+persistence lifecycle behavior remain independent. Decisions retain version,
+source/logical identity, retrieval and
+evaluation timestamps, reason codes, and matched source evidence. Raw records
+remain authoritative and unchanged. Filter decisions retain policy provenance.
+The screening service returns transient derived results; the search index
+persists its own rebuildable decision cache. Any active representation passing both
+stages keeps its logical job eligible; otherwise an unresolved content deferral
+survives an excluded representation. Geographic ambiguity alone never defers or
+excludes a job.
+
+Screening version 2 introduced four fixed contextual
+occupational checks in `occupational_screening`: paid survey participation,
+retail store operations, licensed clinical care, and food-service operations.
+They require title and duty evidence, preserving technical occupations and
+specific engineering duties without allowing generic technology vocabulary to
+override clear unrelated work. Independent category reasons preserve overlap
+and source duty clauses. The reporting helper masks category reasons to compute
+logical-job funnels from the existing decisions; it does not run another
+pipeline. No acquisition, identity, lifecycle, travel-booking exclusions, or AI
+calls are introduced. These occupational checks remain in screening version 5.
+
+Occupational exclusions require positive job-duty evidence, not application
+questionnaires or negated duties. Paid participation also requires compensation
+evidence. Software QA, clinical technology, survey analysis and POS development
+remain distinct from unrelated occupations; generic technology vocabulary does
+not override clear nontechnical duties. There is no source-wide blacklist.
+
+#### Effective decisions and logical aggregation
+
+`screening.py` owns `combine_outcomes`, `combine_decisions`, `outcome_priority`,
+`aggregate_outcomes` and `aggregate_screening`. Deterministic outcomes are
+ELIGIBLE/REJECTED; screening outcomes are KEEP/DEFER/EXCLUDE. REJECTED always
+combines to EXCLUDE; ELIGIBLE preserves the same representation's screen outcome.
+`combine_decisions` changes only the derived outcome, retaining source/logical
+identity, screening version, timestamps, reasons and evidence. Filter reasons
+remain separate; source facts are never rewritten.
+
+Combine each representation before grouping: a filter pass on one posting and
+a screen pass on another do not jointly establish eligibility. Logical priority
+is KEEP > DEFER > EXCLUDE across active representations. Aggregation helpers
+operate on the explicitly supplied set and do not select lifecycle state.
+Search may show inactive siblings in details and observation-date summaries,
+but inactive outcomes cannot establish logical eligibility. Inactive-only groups
+are EXCLUDE when included; active-only processing omits them. Empty outcome
+groups default to EXCLUDE and empty `aggregate_screening` input returns `{}`.
+Representative ties retain source-key order; publication dates use active
+siblings. A provider's independent EXCLUDE may coexist with a global KEEP.
+
+The index SQL projects the shared priority ranks while retaining SQL grouping
+and representative selection. Occupational funnel reporting masks selected
+reasons on existing decisions; it does not rescreen or mutate the original
+evidence. Per-provider contributions can overlap and must not be summed as
+global unique-job counts. Geographic policy details are maintained in
+[Strategy H](geographic_classification.md).
+
+### Derived search and dashboard
+
+`search_index.synchronize` explicitly builds or updates the separate search
+database from the authoritative catalog. It caches per-posting filtering and
+screening decisions with policy, input and implementation fingerprints, and
+aggregates logical jobs. `indexed_search` validates freshness and queries FTS
+and logical summaries, then reads source details from the authoritative catalog.
+`scripts/dashboard.py` is the Streamlit composition root; startup and queries
+do not acquire, migrate, backfill or synchronize data. The direct
+`catalog_search.search_catalog` path remains a benchmark and regression oracle.
+
+The 2026-11-06 authoritative-only metadata enrichment deliberately leaves the
+search database stale. This is expected and must not be repaired as part of
+repository cleanup. See [job metadata](job_metadata.md) and
+[dashboard operations](dashboard.md) for separately invoked maintenance workflows.
 
 ### Resume tailoring and rendering
 
@@ -204,7 +351,8 @@ The system must preserve the distinction among:
 - generated resume artifacts.
 
 Derived data should retain enough linkage to identify the source inputs from
-which it was produced. Exact identifiers, versions, and schemas are deferred.
+which it was produced. Current source keys, logical IDs, policy fingerprints and
+screening versions provide that linkage; AI artifact schemas remain deferred.
 
 ## Deferred decisions
 
@@ -216,8 +364,8 @@ The following remain open until the phase that needs them:
 - manual logical-job merge, split, unlink, and candidate-review workflows;
 - persisted filter-decision history and targeted reevaluation;
 - AI providers, models, prompts, evaluation structure, and ranking policy;
-- scheduling, retries, and deployment;
-- user interface and human-review workflow;
+- scheduling, workflow-level retries, and deployment;
+- interfaces beyond the current catalog dashboard and human-review workflow;
 - resume templates, rendering technology, and output formats;
 - application-tracking states and application-submission behavior; and
 - hosting, CI/CD, containers, and distributed infrastructure.

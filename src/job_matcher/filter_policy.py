@@ -88,6 +88,11 @@ class FilterPolicy:
             raise FilterPolicyError("title must be TextFilterRules")
         if not isinstance(self.location, TextFilterRules):
             raise FilterPolicyError("location must be TextFilterRules")
+        # Retain the required version 1 schema slot without a second geography policy.
+        if self.location.include_any or self.location.exclude_any:
+            raise FilterPolicyError(
+                "location rules must be empty; Strategy H owns geographic eligibility"
+            )
         if not isinstance(self.company, CompanyFilterRules):
             raise FilterPolicyError("company must be CompanyFilterRules")
         if not isinstance(self.description, TextFilterRules):

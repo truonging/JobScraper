@@ -11,8 +11,10 @@ from job_matcher.filter_policy import (
     FilterField,
     FilterOutcome,
     FilterPolicy,
+    FilterPolicyError,
     FilterReasonKind,
     TextFilterRules,
+    load_filter_policy,
 )
 from job_matcher.filtering import (
     DeterministicFilterEvaluator,
@@ -84,21 +86,82 @@ def test_empty_inclusion_groups_impose_no_requirement() -> None:
     assert evaluate(make_linked_job(), make_policy()) is FilterOutcome.ELIGIBLE
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Helpdesk Analyst",
+        "Help Desk Analyst",
+        "Desktop Support Engineer",
+        "IT Support Specialist",
+        "Technical Support Specialist",
+        "Business Analyst - Automation",
+        "IT Auditor",
+        "IT Business Consultant",
+        "Technical Account Manager",
+        "Technical Customer Success Manager",
+        "Data Warehouse Manager",
+        "Systems Maintenance Technician",
+        "Network Communications Specialist",
+        "Network Communications Manager",
+        "Autopilot Software Engineer",
+    ],
+)
+def test_example_policy_keeps_broadly_technical_roles(title: str) -> None:
+    policy = load_filter_policy("examples/filter_policy.example.toml")
+
+    assert evaluate(make_linked_job(title=title), policy) is FilterOutcome.ELIGIBLE
+
+
+def test_empty_description_still_allows_title_exclusion() -> None:
+    job = make_linked_job(title="Registered Nurse", description="")
+    decision = DeterministicFilterEvaluator(
+        make_policy(title_exclude=("nurse",)), clock=lambda: NOW
+    ).evaluate((job,))[0]
+
+    assert decision.outcome is FilterOutcome.REJECTED
+    assert len(decision.reasons) == 1
+    assert decision.reasons[0].field is FilterField.TITLE
+    assert decision.reasons[0].kind is FilterReasonKind.EXCLUDE_MATCH
+    assert decision.reasons[0].matched_term == "nurse"
+
+
+def test_empty_description_is_eligible_under_permissive_policy() -> None:
+    job = make_linked_job(description="")
+    decision = DeterministicFilterEvaluator(make_policy(), clock=lambda: NOW).evaluate(
+        (job,)
+    )[0]
+
+    assert decision.outcome is FilterOutcome.ELIGIBLE
+    assert decision.reasons == ()
+
+
+def test_empty_description_fails_description_inclusion_rule() -> None:
+    job = make_linked_job(description="")
+    decision = DeterministicFilterEvaluator(
+        make_policy(description_include=("python",)), clock=lambda: NOW
+    ).evaluate((job,))[0]
+
+    assert decision.outcome is FilterOutcome.REJECTED
+    assert len(decision.reasons) == 1
+    assert decision.reasons[0].field is FilterField.DESCRIPTION
+    assert decision.reasons[0].kind is FilterReasonKind.NO_INCLUDE_MATCH
+    assert decision.reasons[0].matched_term is None
+
+
 def test_each_nonempty_inclusion_group_is_independently_required() -> None:
     policy = make_policy(
         title_include=("  BACKEND   SOFTWARE engineer ",),
-        location_include=("remote",),
         description_include=("PYTHON",),
     )
 
     assert evaluate(make_linked_job(), policy) is FilterOutcome.ELIGIBLE
     decision = DeterministicFilterEvaluator(policy, clock=lambda: NOW).evaluate(
-        (make_linked_job(location="New York"),)
+        (make_linked_job(description="Build Ruby services."),)
     )[0]
 
     assert decision.outcome is FilterOutcome.REJECTED
     assert len(decision.reasons) == 1
-    assert decision.reasons[0].field is FilterField.LOCATION
+    assert decision.reasons[0].field is FilterField.DESCRIPTION
     assert decision.reasons[0].kind is FilterReasonKind.NO_INCLUDE_MATCH
 
 
@@ -106,7 +169,6 @@ def test_literal_exclusions_and_failed_includes_have_deterministic_reasons() -> 
     policy = make_policy(
         title_include=("frontend",),
         title_exclude=("senior", "backend"),
-        location_exclude=("california",),
         company_exclude=(" example   company ",),
         description_include=("rust",),
         description_exclude=("python",),
@@ -123,7 +185,6 @@ def test_literal_exclusions_and_failed_includes_have_deterministic_reasons() -> 
         (FilterField.TITLE, FilterReasonKind.EXCLUDE_MATCH, "senior"),
         (FilterField.TITLE, FilterReasonKind.EXCLUDE_MATCH, "backend"),
         (FilterField.TITLE, FilterReasonKind.NO_INCLUDE_MATCH, None),
-        (FilterField.LOCATION, FilterReasonKind.EXCLUDE_MATCH, "california"),
         (
             FilterField.COMPANY,
             FilterReasonKind.EXCLUDE_MATCH,
@@ -144,17 +205,18 @@ def test_company_exclusion_requires_exact_normalized_equality() -> None:
     )
 
 
-def test_missing_location_is_treated_as_empty_text() -> None:
+def test_missing_location_does_not_deterministically_reject() -> None:
     job = make_linked_job(location=None)
 
     assert evaluate(job, make_policy()) is FilterOutcome.ELIGIBLE
-    decision = DeterministicFilterEvaluator(
-        make_policy(location_include=("remote",)), clock=lambda: NOW
-    ).evaluate((job,))[0]
 
-    assert decision.outcome is FilterOutcome.REJECTED
-    assert decision.reasons[0].field is FilterField.LOCATION
-    assert decision.reasons[0].kind is FilterReasonKind.NO_INCLUDE_MATCH
+
+@pytest.mark.parametrize("field", ["location_include", "location_exclude"])
+def test_location_policy_cannot_create_a_second_geographic_authority(field) -> None:
+    with pytest.raises(
+        FilterPolicyError, match="Strategy H owns geographic eligibility"
+    ):
+        make_policy(**{field: ("Canada",)})
 
 
 def test_decisions_preserve_input_order_and_complete_provenance() -> None:

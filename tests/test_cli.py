@@ -79,7 +79,7 @@ include_any = ["software"]
 exclude_any = []
 
 [location]
-include_any = ["remote"]
+include_any = []
 exclude_any = []
 
 [company]
@@ -219,7 +219,10 @@ def test_cli_translates_source_error_to_exit_code_one(
     captured = capsys.readouterr()
     assert result == 1
     assert captured.out == ""
-    assert captured.err == "error: Lever request failed\n"
+    assert captured.err == (
+        "error: Lever site 'example', skip=0, limit=100: "
+        "Lever request failed: transport error (URLError)\n"
+    )
 
 
 def test_cli_translates_schema_initialization_error_to_exit_code_one(
@@ -356,8 +359,16 @@ def test_pipeline_cli_empty_snapshot_inactivates_job_and_removes_it_from_filteri
 @pytest.mark.parametrize(
     ("second_outcome", "expected_error"),
     [
-        (URLError("unavailable"), "error: Lever request failed\n"),
-        ({}, "error: Lever postings response must be a JSON array\n"),
+        (
+            URLError("unavailable"),
+            "error: Lever site 'example', skip=0, limit=100: "
+            "Lever request failed: transport error (URLError)\n",
+        ),
+        (
+            {},
+            "error: Lever site 'example', skip=0, limit=100: "
+            "Lever postings response must be a JSON array\n",
+        ),
     ],
     ids=("request-failure", "malformed-response"),
 )
@@ -477,7 +488,10 @@ def test_pipeline_cli_translates_source_failure(
     captured = capsys.readouterr()
     assert result == 1
     assert captured.out == ""
-    assert captured.err == "error: Lever request failed\n"
+    assert captured.err == (
+        "error: Lever site 'example', skip=0, limit=100: "
+        "Lever request failed: transport error (URLError)\n"
+    )
 
 
 def test_pipeline_cli_translates_persistence_failure(

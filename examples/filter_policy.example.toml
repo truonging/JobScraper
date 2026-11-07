@@ -1,16 +1,336 @@
 version = 1
 
 [title]
-include_any = ["software engineer", "backend engineer"]
-exclude_any = ["principal", "director"]
+include_any = []
+exclude_any = [
+    # Healthcare / clinical
+    "registered nurse",
+    "licensed vocational nurse",
+    "licensed practical nurse",
+    "nurse practitioner",
+    "nursing assistant",
+    "certified nursing assistant",
+    "medical assistant",
+    "physician",
+    "physician assistant",
+    "physical therapist",
+    "occupational therapist",
+    "respiratory therapist",
+    "speech therapist",
+    "speech language pathologist",
+    "dental hygienist",
+    "dental assistant",
+    "dentist",
+    "pharmacist",
+    "pharmacy technician",
+    "radiologic technologist",
+    "radiology technologist",
+    "ultrasound technologist",
+    "sonographer",
+    "medical technologist",
+    "surgical technologist",
+    "surgical technician",
+    "phlebotomist",
+    "caregiver",
+    "home health aide",
+    "medical scribe",
+    "veterinarian",
+    "veterinary technician",
+    "veterinary assistant",
+    "dietician",
+    "dietitian",
+
+    # Mental health / social services
+    "social worker",
+    "case worker",
+    "case manager",
+    "therapist",
+    "counselor",
+    "behavioral therapist",
+    "behavior technician",
+    "substance abuse counselor",
+
+    # Food / restaurant / hospitality
+    "restaurant server",
+    "food server",
+    "banquet server",
+    "cocktail server",
+    "dining server",
+    "bartender",
+    "barista",
+    "busser",
+    "dishwasher",
+    "hostess",
+    "line cook",
+    "prep cook",
+    "sous chef",
+    "executive chef",
+    "pastry chef",
+    "restaurant manager",
+    "kitchen manager",
+    "food service worker",
+    "food service manager",
+    "housekeeper",
+    "room attendant",
+    "hotel housekeeper",
+    "front desk agent",
+    "concierge",
+    "valet",
+
+    # Retail
+    "retail associate",
+    "retail sales associate",
+    "store associate",
+    "store manager",
+    "assistant store manager",
+    "cashier",
+    "merchandiser",
+    "visual merchandiser",
+    "stock associate",
+    "stocking associate",
+    "grocery clerk",
+    "produce clerk",
+    "meat clerk",
+    "bakery clerk",
+    "deli clerk",
+    "personal shopper",
+    "stylist",
+
+    # Warehouse / delivery / transportation
+    "warehouse associate",
+    "warehouse worker",
+    "material handler",
+    "package handler",
+    "order picker",
+    "order selector",
+    "forklift operator",
+    "delivery driver",
+    "truck driver",
+    "cdl driver",
+    "bus driver",
+    "shuttle driver",
+    "courier",
+    "route driver",
+    "dispatcher",
+    "freight handler",
+
+    # Construction / skilled trades
+    "construction laborer",
+    "construction worker",
+    "carpenter",
+    "electrician",
+    "plumber",
+    "welder",
+    "pipefitter",
+    "roofer",
+    "painter",
+    "drywall installer",
+    "hvac technician",
+    "hvac installer",
+    "auto mechanic",
+    "automotive mechanic",
+    "automotive technician",
+    "diesel mechanic",
+    "machinist",
+    "cnc machinist",
+    "maintenance mechanic",
+    "maintenance worker",
+    "groundskeeper",
+    "landscaper",
+    "custodian",
+    "janitor",
+
+    # Beauty / personal services
+    "hair stylist",
+    "hairstylist",
+    "barber",
+    "esthetician",
+    "cosmetologist",
+    "nail technician",
+    "massage therapist",
+    "personal trainer",
+    "fitness instructor",
+    "fitness coach",
+
+    # Accounting / bookkeeping / tax
+    "accountant",
+    "staff accountant",
+    "senior accountant",
+    "tax accountant",
+    "tax associate",
+    "tax manager",
+    "bookkeeper",
+    "accounting clerk",
+    "accounting manager",
+    "accounts payable specialist",
+    "accounts receivable specialist",
+    "payroll specialist",
+    "payroll manager",
+    "audit associate",
+
+    # Legal
+    "attorney",
+    "lawyer",
+    "paralegal",
+    "legal assistant",
+    "legal secretary",
+    "litigation associate",
+    "litigation attorney",
+    "corporate counsel",
+    "general counsel",
+
+    # Human resources / recruiting
+    "human resources manager",
+    "human resources generalist",
+    "human resources coordinator",
+    "hr manager",
+    "hr generalist",
+    "hr coordinator",
+    "recruiter",
+    "technical recruiter",
+    "talent acquisition specialist",
+    "talent acquisition manager",
+    "benefits specialist",
+    "benefits manager",
+    "people operations manager",
+
+    # Sales / account management / customer success
+    "sales representative",
+    "sales associate",
+    "sales manager",
+    "sales executive",
+    "account executive",
+    "business development representative",
+    "sales development representative",
+    "territory manager",
+    "territory sales manager",
+    "inside sales representative",
+    "outside sales representative",
+    "insurance agent",
+    "real estate agent",
+    "leasing agent",
+    "client partner",
+    "relationship manager",
+    "commercial relationship manager",
+    "customer success specialist",
+    "customer success representative",
+    "client success partner",
+    "customer experience representative",
+
+    # Marketing / communications / PR
+    "marketing coordinator",
+    "marketing manager",
+    "brand manager",
+    "brand ambassador",
+    "social media manager",
+    "social media coordinator",
+    "public relations specialist",
+    "public relations manager",
+    "copywriter",
+    "content writer",
+
+    # Administrative / clerical
+    "administrative assistant",
+    "executive assistant",
+    "office assistant",
+    "office manager",
+    "receptionist",
+    "secretary",
+    "data entry clerk",
+    "file clerk",
+    "mailroom clerk",
+    "chief of staff",
+
+    # Business / non-technical operations
+    "small business consultant",
+    "outreach specialist",
+    "transcription expert",
+
+    # IT support / helpdesk
+
+    # Education / childcare
+    "preschool teacher",
+    "elementary teacher",
+    "elementary school teacher",
+    "middle school teacher",
+    "high school teacher",
+    "substitute teacher",
+    "teacher assistant",
+    "teaching assistant",
+    "childcare worker",
+    "child care worker",
+    "daycare teacher",
+    "school counselor",
+
+    # Security / protective services
+    "security guard",
+    "armed security officer",
+    "unarmed security officer",
+    "police officer",
+    "correctional officer",
+    "probation officer",
+    "firefighter",
+    "lifeguard",
+
+    # Manufacturing / production
+    "production associate",
+    "production worker",
+    "production operator",
+    "assembly worker",
+    "machine operator",
+    "packaging operator",
+    "packaging associate",
+
+    # Real estate / property
+    "property manager",
+    "assistant property manager",
+    "leasing consultant",
+    "leasing specialist",
+    "real estate broker",
+    "realtor",
+
+    # Miscellaneous clearly unrelated
+    "flight attendant",
+    "personal banker",
+    "bank teller",
+    "loan officer",
+    "mortgage loan officer",
+    "claims adjuster",
+    "underwriter",
+    "event coordinator",
+    "event planner",
+    "photographer",
+    "videographer",
+]
 
 [location]
-include_any = ["remote", "california"]
+include_any = []
 exclude_any = []
 
 [company]
-exclude = ["Example Excluded Company"]
+exclude = []
 
 [description]
-include_any = ["python"]
-exclude_any = ["security clearance required"]
+include_any = []
+exclude_any = [
+    "active security clearance required",
+    "active clearance required",
+    "must possess an active security clearance",
+    "must have an active security clearance",
+    "current security clearance required",
+    "current active security clearance",
+    "active secret clearance required",
+    "active top secret clearance required",
+    "active ts/sci clearance required",
+
+    "current rn license required",
+    "active rn license required",
+
+    "current medical license required",
+    "active medical license required",
+
+    "admission to the state bar required",
+    "active bar membership required",
+
+    "cdl required",
+]

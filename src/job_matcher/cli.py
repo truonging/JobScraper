@@ -22,7 +22,7 @@ from job_matcher.sqlite_repository import SQLiteJobRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the manual Phase 1 command-line interface."""
+    """Build the manual acquisition and Phase 2 command-line interface."""
     parser = argparse.ArgumentParser(prog="job-matcher")
     commands = parser.add_subparsers(dest="command", required=True)
 

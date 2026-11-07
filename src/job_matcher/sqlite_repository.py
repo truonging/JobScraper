@@ -25,7 +25,7 @@ from job_matcher.models import (
 )
 from job_matcher.ports import PersistenceError
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _RAW_COLUMNS = {
     "source",
@@ -45,6 +45,8 @@ _NORMALIZED_COLUMNS = {
     "job_url",
     "apply_url",
     "posted_at",
+    "employment_type",
+    "workplace_type",
     "retrieved_at",
 }
 _SCOPE_STATE_COLUMNS = {"source", "source_scope", "last_retrieved_at"}
@@ -89,6 +91,8 @@ CREATE TABLE normalized_jobs (
     job_url TEXT NOT NULL,
     apply_url TEXT,
     posted_at TEXT,
+    employment_type TEXT,
+    workplace_type TEXT,
     retrieved_at TEXT NOT NULL,
     PRIMARY KEY (source, source_scope, source_job_id),
     FOREIGN KEY (source, source_scope, source_job_id)
@@ -173,8 +177,10 @@ INSERT INTO normalized_jobs (
     job_url,
     apply_url,
     posted_at,
+    employment_type,
+    workplace_type,
     retrieved_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (source, source_scope, source_job_id) DO UPDATE SET
     company = excluded.company,
     title = excluded.title,
@@ -183,6 +189,8 @@ ON CONFLICT (source, source_scope, source_job_id) DO UPDATE SET
     job_url = excluded.job_url,
     apply_url = excluded.apply_url,
     posted_at = excluded.posted_at,
+    employment_type = excluded.employment_type,
+    workplace_type = excluded.workplace_type,
     retrieved_at = excluded.retrieved_at
 """
 
@@ -227,6 +235,8 @@ SELECT
     normalized.job_url,
     normalized.apply_url,
     normalized.posted_at,
+    normalized.employment_type,
+    normalized.workplace_type,
     normalized.retrieved_at AS normalized_retrieved_at,
     raw.retrieved_at AS raw_retrieved_at,
     raw.payload_json
@@ -269,6 +279,8 @@ SELECT
     normalized.job_url,
     normalized.apply_url,
     normalized.posted_at,
+    normalized.employment_type,
+    normalized.workplace_type,
     normalized.retrieved_at
 FROM normalized_jobs AS normalized
 LEFT JOIN source_job_links AS link
@@ -289,6 +301,8 @@ SELECT
     normalized.job_url,
     normalized.apply_url,
     normalized.posted_at,
+    normalized.employment_type,
+    normalized.workplace_type,
     normalized.retrieved_at,
     link.logical_job_id,
     link.linked_at
@@ -310,6 +324,8 @@ SELECT
     normalized.job_url,
     normalized.apply_url,
     normalized.posted_at,
+    normalized.employment_type,
+    normalized.workplace_type,
     normalized.retrieved_at,
     link.logical_job_id,
     link.linked_at
@@ -340,7 +356,7 @@ class SQLiteJobRepository:
         self._database_path = Path(database_path)
 
     def initialize_schema(self) -> None:
-        """Create schema v2, migrate v1, or validate an existing v2 schema."""
+        """Create v3, migrate v1/v2 transactionally, or validate existing v3."""
         if not self._database_path.parent.is_dir():
             raise PersistenceError(
                 f"database directory does not exist: {self._database_path.parent}"
@@ -363,6 +379,17 @@ class SQLiteJobRepository:
             elif version == 1:
                 self._validate_schema_version(connection, 1)
                 self._migrate_v1_to_v2(connection)
+            elif version == 2:
+                self._validate_schema_version(connection, 2)
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "ALTER TABLE normalized_jobs ADD COLUMN employment_type TEXT"
+                    )
+                    connection.execute(
+                        "ALTER TABLE normalized_jobs ADD COLUMN workplace_type TEXT"
+                    )
+                    connection.execute("PRAGMA user_version=3")
             elif version != _SCHEMA_VERSION:
                 raise PersistenceError(
                     f"unsupported database schema version: {version}"
@@ -638,6 +665,12 @@ class SQLiteJobRepository:
             connection.execute("BEGIN IMMEDIATE")
             cls._create_v2_tables(connection)
             connection.execute(
+                "ALTER TABLE normalized_jobs ADD COLUMN employment_type TEXT"
+            )
+            connection.execute(
+                "ALTER TABLE normalized_jobs ADD COLUMN workplace_type TEXT"
+            )
+            connection.execute(
                 """
                 INSERT INTO source_job_lifecycle (
                     source,
@@ -775,6 +808,8 @@ class SQLiteJobRepository:
             else _V2_COLUMNS
         )
         for table_name, expected in expected_columns.items():
+            if table_name == "normalized_jobs" and version < 3:
+                expected = expected - {"employment_type", "workplace_type"}
             rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
             actual = {str(row[1]) for row in rows}
             if actual != expected:
@@ -809,6 +844,8 @@ class SQLiteJobRepository:
             normalized.job_url,
             normalized.apply_url,
             normalized.posted_at.isoformat() if normalized.posted_at else None,
+            normalized.employment_type,
+            normalized.workplace_type,
             normalized.retrieved_at.isoformat(),
         )
 
@@ -827,6 +864,12 @@ class SQLiteJobRepository:
             location=row["location"],
             job_url=row["job_url"],
             apply_url=row["apply_url"],
+            employment_type=row["employment_type"]
+            if "employment_type" in row.keys()
+            else None,
+            workplace_type=row["workplace_type"]
+            if "workplace_type" in row.keys()
+            else None,
             posted_at=(
                 datetime.fromisoformat(row["posted_at"])
                 if row["posted_at"] is not None
@@ -873,6 +916,12 @@ class SQLiteJobRepository:
             location=row["location"],
             job_url=row["job_url"],
             apply_url=row["apply_url"],
+            employment_type=row["employment_type"]
+            if "employment_type" in row.keys()
+            else None,
+            workplace_type=row["workplace_type"]
+            if "workplace_type" in row.keys()
+            else None,
             posted_at=(
                 datetime.fromisoformat(row["posted_at"])
                 if row["posted_at"] is not None

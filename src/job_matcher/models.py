@@ -18,6 +18,11 @@ def _require_non_blank(value: str, field_name: str) -> None:
         raise ContractValidationError(f"{field_name} must be a non-blank string")
 
 
+def _require_string(value: str, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise ContractValidationError(f"{field_name} must be a string")
+
+
 def _require_web_url(value: str, field_name: str) -> None:
     _require_non_blank(value, field_name)
     parsed = urlsplit(value)
@@ -66,10 +71,30 @@ class NormalizedJob:
     apply_url: str | None = None
     posted_at: datetime | None = None
 
+    employment_type: str | None = None
+    workplace_type: str | None = None
+
     def __post_init__(self) -> None:
+        for field, allowed in (
+            (
+                "employment_type",
+                {
+                    "full_time",
+                    "part_time",
+                    "internship",
+                    "contract",
+                    "temporary",
+                    "other",
+                    "unknown",
+                },
+            ),
+            ("workplace_type", {"remote", "hybrid", "onsite", "unknown"}),
+        ):
+            if getattr(self, field) is not None and getattr(self, field) not in allowed:
+                raise ContractValidationError(f"invalid {field}")
         _require_non_blank(self.company, "company")
         _require_non_blank(self.title, "title")
-        _require_non_blank(self.description, "description")
+        _require_string(self.description, "description")
         _require_web_url(self.job_url, "job_url")
         _require_canonical_utc(self.retrieved_at, "retrieved_at")
 

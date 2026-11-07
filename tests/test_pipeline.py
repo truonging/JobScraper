@@ -20,7 +20,7 @@ from job_matcher.models import (
     SourceJobKey,
     SourceSnapshot,
 )
-from job_matcher.pipeline import run_job_pipeline
+from job_matcher.pipeline import process_persisted_catalog, run_job_pipeline
 from job_matcher.ports import PersistenceError, SourceAcquisitionError
 
 NOW = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
@@ -176,6 +176,29 @@ def test_pipeline_runs_source_independent_stages_in_order(source_name: str) -> N
     assert result.evaluated_count == 1
     assert result.eligible_count == 1
     assert result.filter_decisions[0].source_key.source == source_name
+
+
+def test_process_persisted_catalog_runs_downstream_stages_once() -> None:
+    events: list[str] = []
+    repository = MemoryPipelineRepository(events)
+    repository.reconcile_snapshot(make_snapshot())
+    events.clear()
+
+    result = process_persisted_catalog(
+        repository,
+        IdentityResolver(
+            repository,
+            uuid_factory=lambda: LOGICAL_UUID,
+            clock=lambda: NOW,
+        ),
+        DeterministicFilterEvaluator(make_policy(), clock=lambda: NOW),
+    )
+
+    assert events == ["list_unlinked", "list_linked", "assign", "list_active"]
+    assert result.resolved_count == 1
+    assert result.evaluated_count == 1
+    assert result.eligible_count == 1
+    assert len(result.active_linked_jobs) == 1
 
 
 def test_pipeline_successfully_handles_an_empty_snapshot() -> None:

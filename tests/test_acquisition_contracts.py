@@ -131,10 +131,22 @@ def test_source_job_key_rejects_blank_fields(field: str) -> None:
         make_key(**{field: "  "})
 
 
-@pytest.mark.parametrize("field", ["company", "title", "description", "location"])
+@pytest.mark.parametrize("field", ["company", "title", "location"])
 def test_normalized_job_rejects_blank_text(field: str) -> None:
     with pytest.raises(ContractValidationError, match=field):
         make_normalized(**{field: "  "})
+
+
+def test_normalized_job_accepts_blank_description() -> None:
+    job = make_normalized(description="")
+
+    assert job.description == ""
+
+
+@pytest.mark.parametrize("value", [None, 123, []])
+def test_normalized_job_requires_description_to_be_a_string(value: object) -> None:
+    with pytest.raises(ContractValidationError, match="description must be a string"):
+        make_normalized(description=value)
 
 
 @pytest.mark.parametrize("field", ["job_url", "apply_url"])

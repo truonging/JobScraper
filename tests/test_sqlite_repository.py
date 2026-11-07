@@ -39,13 +39,14 @@ def make_job(
     payload_json: str | None = None,
     include_optional: bool = True,
     job_url: str | None = None,
+    description: str = "Build reliable software.",
 ) -> AcquiredJob:
     key = SourceJobKey(source, source_scope, source_job_id)
     normalized = NormalizedJob(
         key=key,
         company="Example Company",
         title=title,
-        description="Build reliable software.",
+        description=description,
         location="Remote" if include_optional else None,
         job_url=job_url or f"https://jobs.example.com/{source_job_id}",
         apply_url=(
@@ -132,6 +133,8 @@ def create_v1_database(database_path: Path, jobs: tuple[AcquiredJob, ...]) -> No
                 sqlite_repository._UPSERT_NORMALIZED,
                 SQLiteJobRepository._normalized_values(job.normalized),
             )
+        connection.execute("ALTER TABLE normalized_jobs DROP COLUMN employment_type")
+        connection.execute("ALTER TABLE normalized_jobs DROP COLUMN workplace_type")
         connection.execute("PRAGMA user_version = 1")
 
 
@@ -148,7 +151,7 @@ def test_initialize_schema_creates_version_two_tables(tmp_path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-    assert version == 2
+    assert version == 3
     assert {
         "raw_source_jobs",
         "normalized_jobs",
@@ -210,9 +213,9 @@ def test_initialization_rejects_an_unversioned_partial_schema(tmp_path: Path) ->
 def test_schema_initialization_rejects_an_unsupported_version(tmp_path: Path) -> None:
     database_path = tmp_path / "jobs.sqlite3"
     with sqlite3.connect(database_path) as connection:
-        connection.execute("PRAGMA user_version = 3")
+        connection.execute("PRAGMA user_version = 99")
 
-    with pytest.raises(PersistenceError, match="unsupported.*3"):
+    with pytest.raises(PersistenceError, match="unsupported.*99"):
         SQLiteJobRepository(database_path).initialize_schema()
 
 
@@ -220,7 +223,7 @@ def test_operations_reject_a_versioned_partial_schema(tmp_path: Path) -> None:
     database_path = tmp_path / "jobs.sqlite3"
     with sqlite3.connect(database_path) as connection:
         connection.execute("CREATE TABLE raw_source_jobs (source TEXT NOT NULL)")
-        connection.execute("PRAGMA user_version = 2")
+        connection.execute("PRAGMA user_version = 3")
 
     with pytest.raises(PersistenceError, match="invalid raw_source_jobs table"):
         SQLiteJobRepository(database_path).get(make_job().normalized.key)
@@ -248,7 +251,7 @@ def test_migration_preserves_jobs_and_backfills_lifecycle(tmp_path: Path) -> Non
     repository.initialize_schema()
 
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
     restored = repository.get(original.normalized.key)
     assert restored is not None
     assert restored.normalized == original.normalized
@@ -376,6 +379,35 @@ def test_first_snapshot_creates_active_lifecycle(tmp_path: Path) -> None:
     assert lifecycle.last_seen_at == T1
     assert lifecycle.inactive_at is None
     assert checkpoint(database_path, "lever", "example") == T1.isoformat()
+
+
+def test_blank_description_is_persisted(tmp_path: Path) -> None:
+    repository = initialized_repository(tmp_path / "jobs.sqlite3")
+    job = make_job(description="")
+
+    repository.reconcile_snapshot(make_snapshot(job))
+
+    stored = repository.get(job.normalized.key)
+    assert stored is not None
+    assert stored.normalized.description == ""
+
+
+def test_blank_description_posting_remains_active_when_still_present(
+    tmp_path: Path,
+) -> None:
+    repository = initialized_repository(tmp_path / "jobs.sqlite3")
+    first = make_job(description="", retrieved_at=T1)
+    observed_again = make_job(description="", retrieved_at=T2)
+
+    repository.reconcile_snapshot(make_snapshot(first, retrieved_at=T1))
+    repository.reconcile_snapshot(make_snapshot(observed_again, retrieved_at=T2))
+
+    lifecycle = repository.get_lifecycle(first.normalized.key)
+    assert lifecycle is not None
+    assert lifecycle.status is SourceJobStatus.ACTIVE
+    assert lifecycle.first_seen_at == T1
+    assert lifecycle.last_seen_at == T2
+    assert lifecycle.inactive_at is None
 
 
 def test_newer_snapshot_updates_current_job_and_preserves_first_seen(
@@ -708,3 +740,19 @@ def test_list_active_linked_jobs_excludes_inactive_and_unlinked_records(
         greenhouse.normalized.key,
     ]
     assert all(item.link.logical_job_id == LOGICAL_ID_1 for item in active)
+
+
+def test_metadata_round_trip_all_repository_projections(tmp_path):
+    from dataclasses import replace
+
+    repository = initialized_repository(tmp_path / "metadata.sqlite3")
+    job = make_job()
+    job = replace(
+        job,
+        normalized=replace(
+            job.normalized, employment_type="contract", workplace_type="hybrid"
+        ),
+    )
+    repository.reconcile_snapshot(make_snapshot(job))
+    assert repository.get(job.normalized.key) == job
+    assert tuple(repository.list_unlinked_jobs())[0] == job.normalized

@@ -43,5 +43,9 @@ Thumbs.db
 /outputs/
 
 # Private discovered/verified job-source registries
-job_sources/lever_verified.json
-scripts
+job_sources
+/scripts/*
+!/scripts/run_phase2_validation.py
+!/scripts/run_greenhouse_validation.py
+!/scripts/dashboard.py
+!/scripts/benchmark_catalog_search.py

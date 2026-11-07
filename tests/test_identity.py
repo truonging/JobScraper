@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from job_matcher import identity as identity_module
 from job_matcher.catalog import (
     IdentityDisposition,
     IdentityEvidenceKind,
@@ -339,6 +340,34 @@ def test_jobs_resolved_earlier_in_run_participate_in_later_matches() -> None:
     ]
     assert results[0].link.logical_job_id == LogicalJobId(UUIDS[0])
     assert results[1].link.logical_job_id == LogicalJobId(UUIDS[0])
+
+
+def test_resolver_indexes_each_job_identity_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    linked = (
+        linked_job(make_job("existing-one"), UUIDS[0]),
+        linked_job(make_job("existing-two"), UUIDS[1]),
+    )
+    unlinked = (make_job("new-one"), make_job("new-two"))
+    repository = RecordingIdentityRepository(unlinked, linked)
+    fingerprinted_keys: list[SourceJobKey] = []
+    original = identity_module.content_fingerprint
+
+    def recording_fingerprint(job: NormalizedJob) -> str:
+        fingerprinted_keys.append(job.key)
+        return original(job)
+
+    monkeypatch.setattr(identity_module, "content_fingerprint", recording_fingerprint)
+
+    resolver(repository, (UUIDS[2], UUIDS[2])).resolve_unlinked()
+
+    assert fingerprinted_keys == [
+        linked[0].normalized.key,
+        linked[1].normalized.key,
+        unlinked[0].key,
+        unlinked[1].key,
+    ]
 
 
 def test_clock_is_read_once_for_all_links() -> None:

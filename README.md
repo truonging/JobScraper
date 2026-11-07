@@ -118,13 +118,19 @@ candidate facts.
 **Phase 1: Acquisition and persistence** and **Phase 2: Identity, lifecycle,
 deduplication, and deterministic filtering** are complete. The project includes
 source-independent full-snapshot acquisition
-contracts, a synchronous adapter for Lever's public Postings API, SQLite
+contracts, synchronous Lever and Greenhouse adapters, SQLite
 persistence, a manual acquisition command, and foundational contracts for
 source-posting lifecycle, logical identity, and deterministic filter policies.
-SQLite schema version 2 reconciles successful source snapshots into current job
+SQLite schema version 3 reconciles successful source snapshots into current job
 and lifecycle state. A source-independent identity resolver can assign unlinked
 source postings to stable logical-job UUIDs using conservative deterministic
 evidence.
+
+Pre-AI screening remains version 5, with Strategy H as the sole geographic
+authority. A separate schema v2 search database stores derived FTS and screening
+results for the read-only Streamlit dashboard. Metadata enrichment currently
+leaves that index intentionally stale; see [job metadata](docs/job_metadata.md).
+Acquisition and dashboard startup never synchronize it automatically.
 
 The deterministic filter evaluator applies the version 1 policy to supplied
 linked normalized postings and returns transient decisions with source, logical
@@ -182,8 +188,9 @@ update the current raw and normalized records for each Lever posting ID rather
 than creating historical copies. A posting becomes inactive when it is absent
 from one later successful full snapshot and is reactivated if it reappears.
 
-Existing schema version 1 databases are migrated transactionally to version 2
-during explicit initialization. Because version 1 retained only the latest
+Existing schema version 1 and 2 databases migrate to version 3 during explicit
+initialization. Version 3 adds nullable employment and workplace metadata to the
+version 2 lifecycle design. Because version 1 retained only the latest
 retrieval, migrated jobs use that retrieval time for both their initial
 `first_seen_at` and `last_seen_at` lifecycle values.
 
@@ -198,8 +205,9 @@ https://api.eu.lever.co/v0/postings` for an EU-hosted Lever site. Optional
 `--timeout-seconds` and `--page-size` arguments control each synchronous fetch.
 
 The command reports source and persistence failures without a traceback and
-returns exit code 1. It does not schedule acquisitions, retry failures,
-deduplicate across sources, or perform filtering or AI analysis.
+returns exit code 1. The adapter uses the bounded page-request retries described
+below. The command does not schedule acquisitions, deduplicate across sources,
+or perform filtering or AI analysis.
 
 ## Complete Phase 2 pipeline
 
@@ -230,6 +238,58 @@ is atomic, identity links are durable, and a later filtering failure does not
 roll back completed persistence or identity work. The entire pipeline is not one
 database transaction.
 
+## Multi-company Phase 2 validation
+
+`scripts/run_phase2_validation.py` acquires the verified Lever registry first,
+then the verified Greenhouse registry into one SQLite catalog. It continues past
+individual source-acquisition failures and performs identity resolution and
+deterministic filtering once after both batches, followed by shared screening
+and provider/global reporting. Failed scopes retain their prior persisted state.
+
+Run the file directly from PyCharm or another IDE. Its constants configure the
+registries, validation database, filter policy, request settings, sample sizes,
+delay, and independent company limits. `COMPANY_LIMIT = None` selects the full
+Lever registry; `GREENHOUSE_COMPANY_LIMIT = None` selects the full Greenhouse
+registry. The current Lever limit is `1`, refreshing one board while retaining
+the existing catalog; Greenhouse defaults to `None` for the full registry. A
+limit of `0` skips acquisition for that provider. The default delay is 0.8 seconds
+between boards within each batch. `DATABASE_PATH` defaults to the existing
+`phase2_validation.sqlite3`, so Greenhouse joins the persisted Lever catalog.
+Unattempted Lever scopes remain active. Existing catalogs
+are reused intentionally and their existence is printed before initialization.
+
+The final report distinguishes current-run acquisition totals from cumulative
+catalog totals. A successful empty snapshot reconciles lifecycle state, while a
+failed or malformed acquisition leaves that source scope unchanged. Detailed job
+output is limited to small eligible and rejected samples.
+
+The runner prints whether its database file existed before initialization.
+Acquisition counts cover only the current run; catalog counts, filtering, and
+samples cover the entire database, including retained active postings from failed
+or unattempted scopes. Request diagnostics identify the site, pagination offset,
+HTTP status or transport category, and available exception type and numeric error
+code without printing arbitrary exception messages or response bodies.
+
+The validation runner uses a configurable 20-second request timeout. Each page
+gets at most three attempts, with 1-second and 2-second exponential backoffs and
+a configurable 5-second delay cap. Only timeouts, explicitly classified temporary
+connection/network/DNS failures, and HTTP 408, 429, 500, 502, 503, and 504 are
+retryable. Valid `Retry-After` seconds or HTTP dates increase the wait when within
+the cap; a longer requested wait fails acquisition rather than retrying too early.
+HTTP 404, certificate errors, malformed postings, invalid JSON, and unexpected
+response shapes fail immediately. Exhausted retries retain the sanitized cause,
+page context, and attempt count. No partial snapshot is reconciled. Aggregate
+retry metrics are deferred. The unrelated CLI timeout default remains 10 seconds.
+
+For an isolated 100-company Lever-only validation from PyCharm, set
+`COMPANY_LIMIT = 100`, `GREENHOUSE_COMPANY_LIMIT = 0`,
+and set `DATABASE_PATH` to a new filename under `PROJECT_ROOT`, such as
+`PROJECT_ROOT / "phase2_validation_100_clean_2026-11-03.sqlite3"`. Verify that the
+file does not exist before starting, and expect `Database existed before run: no`.
+Run `scripts/run_phase2_validation.py` using the project's interpreter. Reusing
+that filename on a later run intentionally reuses its catalog; choose another
+unused filename for another clean run. Preserve existing validation databases.
+
 ## Logical identity
 
 Logical identity resolution operates only on persisted normalized jobs. It may
@@ -245,9 +305,10 @@ description fingerprint is reported only as transient duplicate-candidate
 evidence and never causes an automatic merge. Existing source links are durable
 and normal source-field changes do not move them.
 
-The initial resolver performs straightforward in-memory comparisons. It has no
-provider-specific behavior, fuzzy matching, evidence storage, or performance
-indexing.
+The resolver builds source-independent in-memory indexes for normalized company,
+canonical job and application URLs, and content fingerprints during each pass.
+It has no provider-specific behavior, fuzzy matching, persisted evidence, or
+persistent performance indexing.
 
 ## Filter policy
 
@@ -257,12 +318,14 @@ at `private/filter_policy.toml`; the `private/` directory is excluded from
 version control.
 
 Matching is case-insensitive using Unicode case folding after trimming and
-collapsing whitespace. Title, location, and description rules use literal
+collapsing whitespace. Title and description rules use literal
 substring matching. Company exclusions use exact normalized-name matching.
 Terms are not regular expressions, and the policy does not use stemming, fuzzy
 matching, synonyms, or AI. An empty `include_any` imposes no requirement; a
 nonempty `include_any` requires at least one matching term, independently for
 each configured field. Any exclusion match rejects the posting.
+The required version 1 `[location]` arrays must remain empty: geographic
+eligibility is enforced solely by Strategy H, independently of literal rules.
 
 The evaluator processes exactly the linked normalized postings supplied by its
 caller. Pipeline orchestration selects every active linked posting currently in
@@ -280,6 +343,75 @@ inspect source-specific raw payloads.
 - [AGENTS.md](AGENTS.md): contributor instructions.
 - [Architecture](docs/architecture.md): high-level responsibilities and boundaries.
 - [Roadmap](docs/roadmap.md): project phases.
+- [Dashboard](docs/dashboard.md): operation, search semantics and benchmarks.
+- [Geographic policy](docs/geographic_classification.md): Strategy H evidence and enforcement.
+- [Job metadata](docs/job_metadata.md): extraction, provenance and backfill/recovery.
+
+## Greenhouse acquisition validation
+
+The Greenhouse adapter uses the same source snapshots, SQLite schema, identity
+resolver, deterministic filter, and screening service as Lever. The isolated
+small-run entry point is `scripts/run_greenhouse_validation.py`; select a fresh
+database with `--database` and explicitly add `--resume` for a repeated run.
+It accepts at most five boards and protects the existing Lever validation file.
+See [Greenhouse acquisition](docs/architecture.md#greenhouse-acquisition) for the
+response and normalization contract, and the geographic policy below for screening.
+The combined `run_phase2_validation.py` entry point supports the full registries
+in Lever-then-Greenhouse order. The standalone Greenhouse runner remains limited
+to five boards for small experiments.
+
+## Local pre-AI screening
+
+Run `scripts/screen_persisted_catalog.py` with the project interpreter to screen
+the entire existing `phase2_validation.sqlite3` catalog. Optional `--database`
+and `--policy` arguments select other local inputs; `--explain` prints JSON lines
+with every filter decision, screening decision, matched evidence, source key,
+retrieval timestamp, screening version, and final logical outcome. The script
+opens SQLite read-only and never acquires jobs, initializes schema, resolves
+identities, changes lifecycle, or calls AI. Phase 2 acquisition commands remain
+independent; use this offline command after validation.
+
+Screening version 5 uses Strategy H as the sole geographic eligibility authority,
+replacing the former Lever and Greenhouse geographic rules. It evaluates each
+source representation using normalized facts and matching raw location metadata.
+Only H EXCLUDE enforces geographic exclusion; PASS and REVIEW_ONLY preserve
+non-geographic outcomes. Uncertainty cannot itself create a final DEFER.
+Testing-job disclaimers, missing-description deferrals, occupational exclusions
+and deterministic filtering remain effective. No source facts are rewritten.
+See [the geographic policy](docs/geographic_classification.md) for evidence
+thresholds, structured reasons and cache refresh instructions.
+
+Screening version 5 retains four independent contextual checks: paid poll/survey
+participation, retail store operations, licensed clinical care, and food-service
+operations. Each requires an occupational title and positive duty evidence;
+paid participation also needs compensation evidence. Technical occupations and
+explicit engineering duties are retained. Generic mentions of software, data,
+or technology do not protect unrelated work. For example, cashier POS usage is
+store work, while developing POS integrations is technical work. Clinical
+psychological testing is patient care; software QA is technical work. Negated
+duties and application questionnaires do not establish occupational exclusions.
+Each matched category retains its title and duty clauses as evidence, including
+multiple categories when they overlap. The command reports standalone matches,
+overlaps, and a funnel in the order polls, retail, clinical, food, using actual
+logical IDs and the existing representation-level aggregation.
+
+KEEP is ready for later evaluation, EXCLUDE is unsuitable under explicit rules,
+and DEFER needs substantive source content. Empty descriptions and exact
+placeholders (`N/A`, `TBD`, `[Insert General Job Description Here]`) defer rather
+than disappear. Short substantive descriptions remain eligible. An explicit
+exclusion takes precedence over missing content. At the logical level, KEEP
+beats DEFER, which beats EXCLUDE, after combining the existing filter and new
+screen on each active representation. Excluded/deferred jobs remain in SQLite.
+
+The legacy title filter has one narrow exception: the exact normalized title
+`IT Dispatcher` ignores only the `dispatcher` exclusion. All other title and
+description exclusions still apply, and other dispatcher occupations retain
+their existing behavior.
+
+The current [screening contract](docs/architecture.md#effective-decisions-and-logical-aggregation)
+defines combination, active-sibling aggregation and reporting scope. Obtain
+current catalog counts from the read-only screening command above; historical
+snapshot totals are not maintained as current product documentation.
 
 ## Private data
 
@@ -288,3 +420,17 @@ in `generated_resumes/`. Both directories are ignored. Do not commit private
 data elsewhere or force-add ignored files. `.env` files and local database files
 are also ignored. Use only synthetic, non-sensitive data in test fixtures and
 examples.
+
+## Local catalog dashboard
+
+The optional Streamlit UI searches a separate rebuildable FTS5 index with cached
+per-posting screening decisions. Build it once, then sync after acquisition:
+
+~~~powershell
+.\.venv\Scripts\python.exe -m job_matcher.search_index rebuild
+.\.venv\Scripts\python.exe -m job_matcher.search_index sync
+.\.venv\Scripts\python.exe -m streamlit run scripts/dashboard.py
+~~~
+
+See [dashboard setup and search semantics](docs/dashboard.md) for dependency setup,
+PyCharm launch instructions, cache invalidation, and read-only validation.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
@@ -77,6 +78,86 @@ def content_fingerprint(job: NormalizedJob) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class _IdentityValues:
+    company: str
+    job_url: str
+    apply_url: str | None
+    fingerprint: str
+
+    @classmethod
+    def from_job(cls, job: NormalizedJob) -> _IdentityValues:
+        return cls(
+            company=normalize_identity_text(job.company),
+            job_url=canonicalize_identity_url(job.job_url),
+            apply_url=(
+                canonicalize_identity_url(job.apply_url)
+                if job.apply_url is not None
+                else None
+            ),
+            fingerprint=content_fingerprint(job),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexedLinkedJob:
+    linked: LinkedSourceJob
+    identity: _IdentityValues
+
+
+class _IdentityIndex:
+    def __init__(self, linked_jobs: Sequence[LinkedSourceJob]) -> None:
+        self._job_urls: dict[tuple[str, str], list[_IndexedLinkedJob]] = {}
+        self._apply_urls: dict[tuple[str, str], list[_IndexedLinkedJob]] = {}
+        self._fingerprints: dict[str, list[_IndexedLinkedJob]] = {}
+        for linked in linked_jobs:
+            self.add(linked, _IdentityValues.from_job(linked.normalized))
+
+    def add(self, linked: LinkedSourceJob, identity: _IdentityValues) -> None:
+        indexed = _IndexedLinkedJob(linked, identity)
+        self._job_urls.setdefault((identity.company, identity.job_url), []).append(
+            indexed
+        )
+        if identity.apply_url is not None:
+            self._apply_urls.setdefault(
+                (identity.company, identity.apply_url), []
+            ).append(indexed)
+        self._fingerprints.setdefault(identity.fingerprint, []).append(indexed)
+
+    def url_candidates(
+        self, identity: _IdentityValues
+    ) -> tuple[_IndexedLinkedJob, ...]:
+        candidates = {
+            candidate.linked.normalized.key: candidate
+            for candidate in self._job_urls.get(
+                (identity.company, identity.job_url), ()
+            )
+        }
+        if identity.apply_url is not None:
+            candidates.update(
+                (
+                    candidate.linked.normalized.key,
+                    candidate,
+                )
+                for candidate in self._apply_urls.get(
+                    (identity.company, identity.apply_url), ()
+                )
+            )
+        return tuple(
+            sorted(
+                candidates.values(), key=lambda item: _linked_job_sort_key(item.linked)
+            )
+        )
+
+    def fingerprint_candidates(self, fingerprint: str) -> tuple[_IndexedLinkedJob, ...]:
+        return tuple(
+            sorted(
+                self._fingerprints.get(fingerprint, ()),
+                key=lambda item: _linked_job_sort_key(item.linked),
+            )
+        )
+
+
 class IdentityResolver:
     """Assign unlinked source postings using conservative deterministic evidence."""
 
@@ -105,23 +186,25 @@ class IdentityResolver:
         linked_jobs = sorted(
             self._repository.list_linked_jobs(), key=_linked_job_sort_key
         )
+        identity_index = _IdentityIndex(linked_jobs)
         resolutions: list[IdentityResolution] = []
 
         for job in unlinked_jobs:
-            resolution = self._resolve_job(job, linked_jobs, linked_at)
+            identity = _IdentityValues.from_job(job)
+            resolution = self._resolve_job(job, identity, identity_index, linked_at)
             resolutions.append(resolution)
-            linked_jobs.append(LinkedSourceJob(job, resolution.link))
-            linked_jobs.sort(key=_linked_job_sort_key)
+            identity_index.add(LinkedSourceJob(job, resolution.link), identity)
 
         return tuple(resolutions)
 
     def _resolve_job(
         self,
         job: NormalizedJob,
-        linked_jobs: Sequence[LinkedSourceJob],
+        identity: _IdentityValues,
+        identity_index: _IdentityIndex,
         linked_at: datetime,
     ) -> IdentityResolution:
-        url_matches = _url_matches(job, linked_jobs)
+        url_matches = _url_matches(job, identity, identity_index)
         matched_logical_ids = {
             evidence.matched_logical_job_id for evidence in url_matches
         }
@@ -135,7 +218,7 @@ class IdentityResolver:
 
         evidence = tuple(
             _with_disposition(item, url_disposition) for item in url_matches
-        ) + _fingerprint_matches(job, linked_jobs)
+        ) + _fingerprint_matches(job, identity, identity_index)
         link = self._repository.assign_logical_job(job.key, proposed_id, linked_at)
         created_logical_job = (
             not automatically_linked and link.logical_job_id == proposed_id
@@ -148,62 +231,55 @@ class IdentityResolver:
 
 
 def _url_matches(
-    job: NormalizedJob, linked_jobs: Sequence[LinkedSourceJob]
+    job: NormalizedJob,
+    identity: _IdentityValues,
+    identity_index: _IdentityIndex,
 ) -> tuple[IdentityEvidence, ...]:
-    company = normalize_identity_text(job.company)
-    canonical_job_url = canonicalize_identity_url(job.job_url)
-    canonical_apply_url = (
-        canonicalize_identity_url(job.apply_url) if job.apply_url is not None else None
-    )
     matches: list[IdentityEvidence] = []
-    for candidate in linked_jobs:
-        if normalize_identity_text(candidate.normalized.company) != company:
-            continue
-        if canonicalize_identity_url(candidate.normalized.job_url) == canonical_job_url:
+    for candidate in identity_index.url_candidates(identity):
+        if candidate.identity.job_url == identity.job_url:
             matches.append(
                 IdentityEvidence(
                     source_key=job.key,
-                    matched_source_key=candidate.normalized.key,
-                    matched_logical_job_id=candidate.link.logical_job_id,
+                    matched_source_key=candidate.linked.normalized.key,
+                    matched_logical_job_id=candidate.linked.link.logical_job_id,
                     kind=IdentityEvidenceKind.EXACT_CANONICAL_JOB_URL,
                     disposition=IdentityDisposition.DUPLICATE_CANDIDATE,
-                    value=canonical_job_url,
+                    value=identity.job_url,
                 )
             )
         if (
-            canonical_apply_url is not None
-            and candidate.normalized.apply_url is not None
-            and canonicalize_identity_url(candidate.normalized.apply_url)
-            == canonical_apply_url
+            identity.apply_url is not None
+            and candidate.identity.apply_url == identity.apply_url
         ):
             matches.append(
                 IdentityEvidence(
                     source_key=job.key,
-                    matched_source_key=candidate.normalized.key,
-                    matched_logical_job_id=candidate.link.logical_job_id,
+                    matched_source_key=candidate.linked.normalized.key,
+                    matched_logical_job_id=candidate.linked.link.logical_job_id,
                     kind=IdentityEvidenceKind.EXACT_CANONICAL_APPLY_URL,
                     disposition=IdentityDisposition.DUPLICATE_CANDIDATE,
-                    value=canonical_apply_url,
+                    value=identity.apply_url,
                 )
             )
     return tuple(matches)
 
 
 def _fingerprint_matches(
-    job: NormalizedJob, linked_jobs: Sequence[LinkedSourceJob]
+    job: NormalizedJob,
+    identity: _IdentityValues,
+    identity_index: _IdentityIndex,
 ) -> tuple[IdentityEvidence, ...]:
-    fingerprint = content_fingerprint(job)
     return tuple(
         IdentityEvidence(
             source_key=job.key,
-            matched_source_key=candidate.normalized.key,
-            matched_logical_job_id=candidate.link.logical_job_id,
+            matched_source_key=candidate.linked.normalized.key,
+            matched_logical_job_id=candidate.linked.link.logical_job_id,
             kind=IdentityEvidenceKind.EXACT_CONTENT_FINGERPRINT,
             disposition=IdentityDisposition.DUPLICATE_CANDIDATE,
-            value=fingerprint,
+            value=identity.fingerprint,
         )
-        for candidate in linked_jobs
-        if content_fingerprint(candidate.normalized) == fingerprint
+        for candidate in identity_index.fingerprint_candidates(identity.fingerprint)
     )
 
 

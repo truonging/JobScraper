@@ -51,11 +51,6 @@ class DeterministicFilterEvaluator:
         normalized = job.normalized
         reasons = (
             *_text_reasons(normalized.title, self._policy.title, FilterField.TITLE),
-            *_text_reasons(
-                normalized.location or "",
-                self._policy.location,
-                FilterField.LOCATION,
-            ),
             *_company_reasons(normalized.company, self._policy.company.exclude),
             *_text_reasons(
                 normalized.description,
@@ -63,6 +58,18 @@ class DeterministicFilterEvaluator:
                 FilterField.DESCRIPTION,
             ),
         )
+        # The exact IT service-desk role is not transportation dispatch. Keep
+        # every other exclusion, including description requirements, intact.
+        if _normalize_text(normalized.title) == "it dispatcher":
+            reasons = tuple(
+                reason
+                for reason in reasons
+                if not (
+                    reason.field is FilterField.TITLE
+                    and reason.matched_term is not None
+                    and _normalize_text(reason.matched_term) == "dispatcher"
+                )
+            )
         outcome = FilterOutcome.REJECTED if reasons else FilterOutcome.ELIGIBLE
         return FilterDecision(
             logical_job_id=job.link.logical_job_id,
